@@ -103,7 +103,13 @@ local function exportCurrentPhoto(photo)
         LR_export_colorSpace = "sRGB",
         LR_jpeg_quality = 0.85,
         LR_size_doConstrain = true,
-        LR_size_maxDimension = 4096,
+        -- Not the largest the photo allows: vision models resize an image to
+        -- their own tiles before looking at it, so past a point the extra
+        -- pixels only cost export time, upload time and tokens without telling
+        -- the model anything more. 2048 keeps enough detail for the judgements
+        -- we ask for - tonal separation, colour cast, noise, halos - while
+        -- roughly quartering the bytes of a 4096px export.
+        LR_size_maxDimension = 2048,
         LR_export_destinationType = "specificFolder",
         LR_export_destinationPathPrefix = WORK_DIR,
         LR_export_useSubfolder = false,

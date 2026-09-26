@@ -20,6 +20,14 @@ local log = VenzAILog.scoped("Gemini")
 local BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 local LIST_TIMEOUT = 10
 
+-- The analysis returns numbers, not prose: the same photograph should produce
+-- the same develop settings twice running, and three refinement passes should
+-- converge rather than argue. At 0.9 they disagreed with each other through
+-- sampling alone, which reads as the model changing its mind. Low, not zero:
+-- the task still carries judgement, and a flat 0 makes a model repeat a first
+-- wrong guess across all three passes instead of reconsidering it.
+local ANALYSIS_TEMPERATURE = 0.2
+
 local M = {
     id = "gemini",
     displayName = "$$$/VenzAI/Provider/Gemini/Name=Gemini (Google, cloud)",
@@ -108,8 +116,9 @@ end
 
 function M.analyze(request, config)
     local generationConfig = request.wantsJson
-        and '{ "response_mime_type": "application/json", "temperature": 0.9 }'
-        or '{ "temperature": 0.9 }'
+        and string.format('{ "response_mime_type": "application/json", "temperature": %s }',
+            ANALYSIS_TEMPERATURE)
+        or string.format('{ "temperature": %s }', ANALYSIS_TEMPERATURE)
     local payload = string.format('{ "contents": [{ "parts": [%s] }], "generationConfig": %s }',
         partsJson(request.parts), generationConfig)
 

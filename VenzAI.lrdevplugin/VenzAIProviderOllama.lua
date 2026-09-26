@@ -27,6 +27,14 @@ local log = VenzAILog.scoped("Ollama")
 
 local LIST_TIMEOUT = 10
 
+-- The analysis returns numbers, not prose: the same photograph should produce
+-- the same develop settings twice running, and three refinement passes should
+-- converge rather than argue. At 0.9 they disagreed with each other through
+-- sampling alone, which reads as the model changing its mind. Low, not zero:
+-- the task still carries judgement, and a flat 0 makes a model repeat a first
+-- wrong guess across all three passes instead of reconsidering it.
+local ANALYSIS_TEMPERATURE = 0.2
+
 local M = {
     id = "ollama",
     displayName = "$$$/VenzAI/Provider/Ollama/Name=Ollama (local, offline)",
@@ -90,7 +98,8 @@ function M.analyze(request, config)
     -- truncated flag is set.
     local payload = string.format(
         '{ "model": %s, "prompt": %s, "images": [%s], %s "stream": false, ' ..
-        '"options": { "temperature": 0.9, "num_ctx": 32768, "num_predict": 4096 } }',
+        '"options": { "temperature": ' .. ANALYSIS_TEMPERATURE ..
+        ', "num_ctx": 32768, "num_predict": 4096 } }',
         Json.escape(config.model),
         Json.escape(table.concat(texts, "\n\n")),
         table.concat(images, ","),

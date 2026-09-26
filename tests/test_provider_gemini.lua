@@ -13,6 +13,20 @@ end
 local CONFIG = { apiKey = "k", model = "gemini-2.5-pro", imageModel = "gemini-2.5-flash-image" }
 
 return {
+    -- The analysis asks for numbers, not for ideas: the same photograph must
+    -- produce the same develop settings twice running. A high temperature made
+    -- consecutive refinement passes disagree with each other through sampling
+    -- alone, which reads to the user as the model changing its mind.
+    { "the analysis asks for a low temperature, so passes do not disagree by chance", function()
+        harness.reset()
+        local D = require 'VenzAIProviderGemini'
+        harness.queueResponse(analysisBody('{"Exposure2012": 0.5}'), OK)
+        Contract.call(D, "analyze", { parts = {}, wantsJson = true }, CONFIG)
+        local sent = harness.http.requests[1].body:match('"temperature"%s*:%s*([%d%.]+)')
+        assert(sent, "no temperature in the payload: " .. harness.http.requests[1].body)
+        assert(tonumber(sent) <= 0.3, "temperature is " .. sent .. ", too high for a numeric answer")
+    end },
+
     { "the driver satisfies the contract", function()
         local ok, problem = Contract.validateDriver(Gemini)
         assert(ok, tostring(problem))

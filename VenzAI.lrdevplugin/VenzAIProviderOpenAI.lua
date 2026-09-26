@@ -30,6 +30,14 @@ local log = VenzAILog.scoped("OpenAI")
 
 local LIST_TIMEOUT = 10
 
+-- The analysis returns numbers, not prose: the same photograph should produce
+-- the same develop settings twice running, and three refinement passes should
+-- converge rather than argue. At 0.9 they disagreed with each other through
+-- sampling alone, which reads as the model changing its mind. Low, not zero:
+-- the task still carries judgement, and a flat 0 makes a model repeat a first
+-- wrong guess across all three passes instead of reconsidering it.
+local ANALYSIS_TEMPERATURE = 0.2
+
 local M = {
     id = "openai",
     displayName = "$$$/VenzAI/Provider/OpenAI/Name=OpenAI (cloud)",
@@ -108,7 +116,8 @@ function M.analyze(request, config)
     local responseFormat = request.wantsJson
         and ', "response_format": { "type": "json_object" }' or ''
     local payload = string.format(
-        '{ "model": %s, "messages": [{ "role": "user", "content": [%s] }], "temperature": 0.9%s }',
+        '{ "model": %s, "messages": [{ "role": "user", "content": [%s] }], "temperature": '
+        .. ANALYSIS_TEMPERATURE .. '%s }',
         Json.escape(config.model), contentJson(request.parts), responseFormat)
 
     local url = endpoint(config.baseUrl, "/chat/completions")
