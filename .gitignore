@@ -1,0 +1,18 @@
+# Old plug-in versions, diagnostic dumps and runtime artefacts kept locally.
+# Not source: 3.7 MB of logs, exported images, an archive and personal notes
+# (server address and SSH public key).
+backup/
+
+# Runtime artefacts, in case an older build still writes into the bundle.
+# Current code writes the log to Lightroom's own log folder and working files
+# to the OS temp directory, so these should never reappear.
+*.log
+VenzAI.lrdevplugin/nano_banana_reference.*
+
+# Compiled Lua, if luac is ever run with an output file.
+*.luac
+
+# OS clutter
+.DS_Store
+Thumbs.db
+desktop.ini
