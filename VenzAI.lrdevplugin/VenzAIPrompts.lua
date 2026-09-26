@@ -25,9 +25,9 @@ local log = VenzAILog.log
 
 local M = {}
 
--- All text sent to the model (prompts) is in ENGLISH: models, including
--- Gemini, follow technical instructions more reliably in English, and it's
--- the language the Lightroom develop settings format is documented in.
+-- All text sent to the model (prompts) is in ENGLISH: vision-language models
+-- follow technical instructions more reliably in English, and it's the
+-- language the Lightroom develop settings format is documented in.
 local PARAM_RULES = [[
 Return ONLY a valid JSON object (no markdown fences, no ```json) containing only the keys actually needed, from these categories. Values are numbers, except ConvertToGrayscale which is a JSON boolean and CameraProfile which is a quoted string from a closed list:
 
@@ -216,9 +216,10 @@ function M.readCurrentSettings(photo)
 end
 
 -- Single prompt used for every pass of the analysis/refinement loop. On pass
--- 1 the image is the original photo (or, in the Gemini pipeline, it is paired
--- with the Nano Banana reference); from the following passes onward it is
--- the result of its own previous edit, reviewed with a critical eye.
+-- 1 the image is the original photo, paired with the generated reference when
+-- the active provider declares that capability; from the following passes
+-- onward it is the result of its own previous edit, reviewed with a critical
+-- eye.
 function M.buildAnalysisPrompt(pass, totalPasses, hasReference, currentSettingsBlock)
     local intro
     if pass == 1 then

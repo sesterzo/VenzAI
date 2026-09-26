@@ -7,7 +7,7 @@ backup/
 # Current code writes the log to Lightroom's own log folder and working files
 # to the OS temp directory, so these should never reappear.
 *.log
-VenzAI.lrdevplugin/nano_banana_reference.*
+VenzAI.lrdevplugin/venzai_reference.*
 
 # Compiled Lua, if luac is ever run with an output file.
 *.luac
