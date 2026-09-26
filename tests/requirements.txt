@@ -1,0 +1,6 @@
+# The Lua 5.1 interpreter the test harness runs on. Lightroom runs Lua 5.1 and
+# ships no interpreter we can drive; Adobe's luac.exe comes with the
+# downloadable SDK, not with the application. lupa embeds several runtimes and
+# lua51 is the one whose dialect matches.
+# Install with: python -m pip install -r tests/requirements.txt
+lupa>=2.8
