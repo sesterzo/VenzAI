@@ -28,7 +28,18 @@ def run_suite(path):
     runtime.globals()["VENZAI_BUNDLE"] = BUNDLE.as_posix()
     runtime.execute(HARNESS.read_text(encoding="utf-8"))
 
-    suite = runtime.execute(path.read_text(encoding="utf-8"))
+    # A suite file can raise while it is still loading - a top-level require of
+    # a module that does not exist yet is the normal RED of the first step of
+    # every task. That is one suite failing, not a reason to abandon the run and
+    # leave the remaining suites unreported.
+    try:
+        suite = runtime.execute(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print("  ERROR  %s did not load" % path.name)
+        for line in str(exc).strip().splitlines()[:6]:
+            print("          %s" % line)
+        return 0, 1
+
     if suite is None:
         print("  ERROR  %s returned nothing; a suite must return an array of cases"
               % path.name)
