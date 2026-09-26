@@ -3,6 +3,24 @@ local Registry = require 'VenzAIProviderRegistry'
 local Settings = require 'VenzAISettings'
 
 return {
+    -- The bug this pins cost a working settings panel: with a dot in the key,
+    -- every field of every driver rendered empty and nothing typed was saved.
+    -- Checked over the real registry, so a new driver whose id or field key
+    -- would break the binding fails here rather than in Lightroom.
+    { "every declared field of every driver has a flat binding key", function()
+        local Contract = require 'VenzAIProviderContract'
+        local seen = {}
+        for _, driver in ipairs(Registry.all()) do
+            for _, field in ipairs(driver.settingsFields) do
+                local key = Contract.bindingKey(driver.id, field.key)
+                assert(not key:find("%."),
+                    "LrView would read this as a key path: " .. key)
+                assert(not seen[key], "two fields share the binding key " .. key)
+                seen[key] = true
+            end
+        end
+    end },
+
     { "every registered driver satisfies the contract", function()
         local problems = Registry.problems()
         assert(#problems == 0, "rejected drivers: " .. table.concat(problems, " | "))

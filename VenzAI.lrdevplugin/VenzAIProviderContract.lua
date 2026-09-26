@@ -65,6 +65,29 @@ M.FIELD_ROLES = {
 }
 
 --------------------------------------------------------------------------------
+-- Binding keys
+--------------------------------------------------------------------------------
+
+-- A driver id and a field key are plain identifiers: a letter followed by
+-- letters and digits. Enforced rather than assumed, because two things depend
+-- on it - see bindingKey below.
+local IDENTIFIER = "^%a%w*$"
+
+local function isIdentifier(value)
+    return type(value) == "string" and value:find(IDENTIFIER) ~= nil
+end
+
+-- The key one of a driver's fields is bound to in the settings panel's property
+-- table. It is deliberately NOT the preferences key: LrView reads a dot in a
+-- bound key as a KEY PATH, so "provider.gemini.apiKey" made it look for a table
+-- called `provider` and bind the control to nothing - every field rendered
+-- empty and nothing the user typed was ever saved. This key is flat, and the
+-- identifier rule above is what keeps joining the two parts unambiguous.
+function M.bindingKey(driverId, fieldKey)
+    return string.format("provider_%s_%s", tostring(driverId), tostring(fieldKey))
+end
+
+--------------------------------------------------------------------------------
 -- Response constructors
 --------------------------------------------------------------------------------
 
@@ -154,6 +177,12 @@ function M.validateDriver(driver)
     if not isNonEmptyString(driver.id) then
         return false, "missing 'id'"
     end
+    if not isIdentifier(driver.id) then
+        return false, string.format(
+            "driver id '%s' is not a plain identifier: a letter then letters and digits, "
+            .. "so that it joins into a flat binding key without a dot or a collision",
+            driver.id)
+    end
     if not isNonEmptyString(driver.displayName) then
         return false, string.format("driver '%s' is missing 'displayName'", driver.id)
     end
@@ -192,6 +221,11 @@ function M.validateDriver(driver)
         if not isNonEmptyString(field.key) then
             return false, string.format("driver '%s': settingsFields[%d] has no 'key'",
                 driver.id, index)
+        end
+        if not isIdentifier(field.key) then
+            return false, string.format(
+                "driver '%s': field key '%s' is not a plain identifier, so it cannot "
+                .. "join into a flat binding key", driver.id, field.key)
         end
         if not M.FIELD_ROLES[field.role] then
             return false, string.format("driver '%s': field '%s' has the unknown role '%s'",

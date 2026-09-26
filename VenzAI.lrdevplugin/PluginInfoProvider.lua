@@ -36,10 +36,13 @@ log("=== PluginInfoProvider module loaded ===")
 Settings.applyDefaults()
 Settings.purgeLegacyPlainTextKey()
 
--- Property-table keys are namespaced exactly as the prefs are, so two drivers
--- declaring a field called "model" do not collide in the binding either.
+-- Namespaced by driver, so two drivers declaring a field called "model" do not
+-- collide in the binding either. NOT the same string as the preferences key,
+-- which is dotted: a dot in a bound key is a key path to LrView, and the panel
+-- then binds every control to a table that does not exist. The contract builds
+-- the flat form and validates the identifiers it joins.
 local function propertyKey(driverId, fieldKey)
-    return string.format("provider.%s.%s", driverId, fieldKey)
+    return Contract.bindingKey(driverId, fieldKey)
 end
 
 -- Forward declaration: groupForDriver closes over this, and it is defined below.

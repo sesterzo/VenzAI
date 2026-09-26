@@ -39,6 +39,56 @@ end
 local VALID_CONFIG = { apiKey = "k", model = "fake-1" }
 
 return {
+    -- Regression, found in Lightroom: every driver field rendered empty and
+    -- nothing the user typed was ever saved, because the panel's property-table
+    -- keys were "provider.<id>.<field>". LrView reads a dot in a bound key as a
+    -- KEY PATH - it looked for propertyTable.provider.gemini.apiKey, found no
+    -- table called `provider`, and bound the control to nothing. So the binding
+    -- key is built here, and it may not contain a dot.
+    { "a binding key contains no dot, because LrView reads one as a key path", function()
+        local key = Contract.bindingKey("gemini", "apiKey")
+        assert(not key:find("%."), "the key must be flat, got " .. key)
+    end },
+
+    { "binding keys do not collide across drivers or fields", function()
+        local seen = {}
+        local pairsToCheck = {
+            { "gemini", "model" }, { "gemini", "imageModel" },
+            { "openai", "model" }, { "ollama", "model" },
+        }
+        for _, pair in ipairs(pairsToCheck) do
+            local key = Contract.bindingKey(pair[1], pair[2])
+            assert(not seen[key], "two fields share the binding key " .. key)
+            seen[key] = true
+        end
+    end },
+
+    -- The flat key is only unambiguous while the parts it joins are plain
+    -- identifiers: a driver id "a_b" with field "c" and a driver "a" with field
+    -- "b_c" would otherwise produce the same key, and a dot would bring back
+    -- the key-path bug through the driver rather than through the panel.
+    { "a driver id that is not a plain identifier is rejected", function()
+        local ok, problem = Contract.validateDriver(goodDriver({ id = "ge.mini" }))
+        assert(not ok, "a dotted id was accepted")
+        assert(problem:find("id"), "the problem must name the id, got " .. tostring(problem))
+
+        assert(not Contract.validateDriver(goodDriver({ id = "ge_mini" })),
+            "an id with an underscore was accepted")
+        assert(Contract.validateDriver(goodDriver({ id = "gemini2" })),
+            "a plain identifier with a digit must stay valid")
+    end },
+
+    { "a field key that is not a plain identifier is rejected", function()
+        local ok, problem = Contract.validateDriver(goodDriver({
+            settingsFields = {
+                { key = "api.key", role = "secret",
+                  label = "$$$/VenzAI/Provider/Fake/ApiKey=API key" },
+            },
+        }))
+        assert(not ok, "a dotted field key was accepted")
+        assert(problem:find("api%.key"), "the problem must name the field, got " .. tostring(problem))
+    end },
+
     --------------------------------------------------------------------------
     -- validateDriver
     --------------------------------------------------------------------------
