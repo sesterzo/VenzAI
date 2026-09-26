@@ -1,5 +1,13 @@
 # VenzAI
 
+**A vision model reads your photograph. Lightroom gets the sliders.**
+
+[![tests](https://github.com/sesterzo/VenzAI/actions/workflows/tests.yml/badge.svg)](https://github.com/sesterzo/VenzAI/actions/workflows/tests.yml)
+![Lightroom Classic 11+](https://img.shields.io/badge/Lightroom%20Classic-11%2B-31a8ff)
+![Windows and macOS](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey)
+![Lua 5.1](https://img.shields.io/badge/Lua-5.1-000080)
+![Gemini, OpenAI, Ollama](https://img.shields.io/badge/providers-Gemini%20%7C%20OpenAI%20%7C%20Ollama-4b8bbe)
+
 VenzAI looks at a photograph with a vision model and translates what it sees
 into real Adobe Lightroom Classic develop settings — exposure, tone curve,
 white balance, the colour mixer, detail, grain, crop, vignette, and AI-detected
@@ -12,6 +20,15 @@ after every step, so there is always a way back.
 
 It runs against Google Gemini, OpenAI, or entirely offline through a local
 Ollama model.
+
+- [What a run actually does](#what-a-run-actually-does)
+- [Requirements](#requirements)
+- [Installing](#installing)
+- [Setting up a provider](#setting-up-a-provider)
+- [Checking it works](#checking-it-works)
+- [When something goes wrong](#when-something-goes-wrong)
+- [What it does not do](#what-it-does-not-do)
+- [For developers](#for-developers)
 
 ---
 
