@@ -111,20 +111,53 @@ local function maskStillExists(maskID)
     return currentMaskIDs()[maskID] == true
 end
 
+-- Puts the Develop panel back where the user had it. Entering masking is this
+-- module's doing - goToMasking() is required before selectMask - so leaving it
+-- is this module's job too. Without this the run ended with the Masking panel
+-- open and the last mask still selected, so the next thing the user did landed
+-- inside that mask instead of on the photograph.
+--
+-- Deselect first, then move the panel: a mask left selected is what makes the
+-- panel reopen on it. Both are best-effort - a host without goToBasic simply
+-- keeps the panel where it is, which is not worth failing a finished edit for.
+local function leaveMasking()
+    local okDeselect = pcall(function() LrDevelopController.selectMask(nil) end)
+    if not okDeselect then
+        log("Could not deselect the last mask; the Masking panel may stay open.")
+    end
+
+    if type(LrDevelopController.goToBasic) == "function" then
+        local okBasic = pcall(function() LrDevelopController.goToBasic() end)
+        if not okBasic then
+            log("Could not return to the Basic panel; the Masking panel may stay open.")
+        end
+    else
+        log("This Lightroom version exposes no goToBasic; leaving the panel as it is.")
+    end
+end
+
+-- Returns the number of masks written AND the set of region types that were
+-- really written, `{ [type] = true }`. The second value exists because the
+-- caller records what each mask carries for the next pass, and five paths
+-- through this function skip a mask without writing anything. Recording a
+-- correction the mask never received told the next pass a region was handled
+-- when it was not, and the region stayed wrong for the rest of the run.
 function M.applyMasksToPhoto(photo, masks, maskIDsByType)
+    local writtenTypes = {}
+
     if not masks or #masks == 0 then
-        return 0
+        return 0, writtenTypes
     end
 
     if not M.maskingApiAvailable() then
         log("This Lightroom version does not expose the masking API: skipping local corrections, global settings are unaffected.")
-        return 0
+        return 0, writtenTypes
     end
 
     local okSwitch = pcall(function() LrApplicationView.switchToModule("develop") end)
     if not okSwitch then
         log("Could not switch to the Develop module, skipping local mask corrections.")
-        return 0
+        return 0, writtenTypes
     end
     LrTasks.sleep(1.0)
 
@@ -132,7 +165,7 @@ function M.applyMasksToPhoto(photo, masks, maskIDsByType)
     local okMasking = pcall(function() LrDevelopController.goToMasking() end)
     if not okMasking then
         log("Could not open the masking panel, skipping local mask corrections.")
-        return 0
+        return 0, writtenTypes
     end
     LrTasks.sleep(0.5)
 
@@ -209,6 +242,7 @@ function M.applyMasksToPhoto(photo, masks, maskIDsByType)
 
                 if anySet then
                     appliedCount = appliedCount + 1
+                    writtenTypes[mask.type] = true
                 end
             elseif not okSelect then
                 log(string.format("Mask '%s': selectMask(%s) failed, skipping.", mask.type, tostring(maskID)))
@@ -216,7 +250,9 @@ function M.applyMasksToPhoto(photo, masks, maskIDsByType)
         end
     end
 
-    return appliedCount
+    leaveMasking()
+
+    return appliedCount, writtenTypes
 end
 
 return M
