@@ -104,7 +104,7 @@ VenzAI.lrdevplugin/
 ```
 
 `VenzAIProcess.lua` is split as part of this work, not as unrelated
-refactoring. It is 1389 lines; extracting the drivers alone removes about 120.
+refactoring. It is 1457 lines; extracting the drivers alone removes about 120.
 The bulk is prompts (~200 lines of text) and parsing/validation (~350), and
 leaving them in place would keep the file unreadable and hide the very boundary
 this design creates. The parameter vocabulary in particular is the part that
@@ -340,6 +340,46 @@ No migration from the current keys. See §3.
 driver and one row per declared field, and enables the group bound to
 `activeProvider`. Adding a provider does not touch this file.
 
+### 8.5 Reading the configuration
+
+`Settings.snapshot()` is removed. It returns a table with one named field per
+Gemini and Ollama setting, so adding provider #4 would have to touch it,
+against the criterion of §13. It is replaced by:
+
+```lua
+Settings.providerConfig(driverId, settingsFields) -> config
+```
+
+which iterates the fields the driver declares, reads each one from
+`LrPasswords` when `role == "secret"` and from `LrPrefs` otherwise, applies the
+declared `default` through the existing `valueOr` rule, and returns a flat
+table keyed by the field's own `key` — `{ apiKey = ..., model = ... }`. That
+table is the `config` argument of §5.2. `Settings` keeps only the settings that
+belong to no provider: `activeProvider` and `refinementPasses`.
+
+**The read moves inside the run.** Today it happens at the top level of
+`VenzAIProcess.lua`, which is correct as it stands: Lightroom re-executes a
+menu-item file on every invocation, so each run already reads fresh values.
+This was confirmed against the runtime logs of an earlier version, which show
+two complete runs minutes apart with no intervening module load, and an engine
+change picked up by the next run 24 seconds later. Nothing here is a fix for
+staleness.
+
+The reason is the error model. `validate(config)` yields `config_invalid` with
+a `reasonKey`, and §6.1 requires that failure to reach the user as a localized
+message from the catalog, exactly like every other `errorKind`. The failure
+handler and the progress scope that do that exist only inside
+`LrFunctionContext.callWithContext`. Reading the configuration above it would
+give one class of failure two different error paths: the catalog dialog for a
+provider that rejects its config, and Lightroom's raw error dialog for a
+provider whose config could not be read at all.
+
+**One read per run, immutable.** The active driver and its config are resolved
+once, before the pass loop, and passed as arguments. A run spanning five passes
+and several minutes therefore uses one consistent configuration, and editing
+the panel mid-run takes effect on the next run — which is what the current
+behaviour already is.
+
 ## 9. Registry
 
 `VenzAIProviderRegistry.lua` is a hand-written table:
@@ -385,11 +425,27 @@ This removes the last place where the engine names a provider.
 
 What can genuinely be checked without running Lightroom:
 
-- all files compile with the SDK's `luac.exe`;
-- no unexpected global reads, via `luac -l` bytecode inspection;
+- every file loads under a real Lua 5.1 interpreter, which is the dialect
+  Lightroom runs. `luac.exe` ships with Adobe's downloadable SDK and is not
+  present on the development machine; a Lightroom Classic installation carries
+  only `LightroomSDK.dll`, which does not compile. The interpreter used instead
+  is the `lua51` runtime embedded in the Python package `lupa`, driven by a
+  harness that stubs `import`, `require` and `LOC`. This was verified before
+  planning: `VenzAISettings.lua` loads unmodified under it, and its defaults,
+  its pass clamp and its empty-string fallback are all assertable;
+- the pure modules are unit-tested through that harness — `VenzAIParse`,
+  `VenzAIPrompts`, `VenzAIMessages` and `VenzAIProviderContract` touch no
+  `Lr*` namespace beyond what a stub supplies, so their behaviour is checked
+  outside Lightroom rather than only inspected;
+- each driver's request serialization is unit-tested with a stubbed `LrHttp`
+  that captures the payload, so the JSON a driver builds is checked without a
+  network call;
 - the contract validator rejects a malformed driver with a precise message;
 - the translation key-completeness script reports zero missing and zero
   orphaned keys.
+
+The harness is a development tool and lives outside the plug-in bundle, which
+continues to contain nothing but what Lightroom loads.
 
 What requires a manual run in Lightroom: that masks land on the correct mask,
 that prompts produce sensible edits, that timeouts are well calibrated, and
