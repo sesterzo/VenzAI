@@ -16,3 +16,6 @@ VenzAI.lrdevplugin/venzai_reference.*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Records the bundle hash at the last build bump (see .claude/hooks/bump-build.sh).
+.claude/.build-stamp
