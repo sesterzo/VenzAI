@@ -95,6 +95,12 @@ local function defaultStubs()
             end,
         },
         LrErrors = { throwUserError = function(m) error(m, 2) end },
+        -- Empty on purpose: VenzAIMasks imports both at load time, and every
+        -- test that exercises masking supplies its own LrDevelopController
+        -- through harness.stub. An empty table here is what lets the module
+        -- load at all.
+        LrDevelopController = {},
+        LrApplicationView = { switchToModule = function() end },
         LrTasks = {
             startAsyncTask = function(fn) fn() end,
             sleep = function() end,
