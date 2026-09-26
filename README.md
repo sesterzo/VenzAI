@@ -1,1 +1,204 @@
-VenzAI analyzes a photograph with a vision-language model and translates what it sees into actual Adobe Lightroom Classic develop settings — exposure, tone curve, colour, HSL, detail, crop, vignette, and AI-detected local masks. Nothing is baked into pixels: every change lands on real sliders you can review, adjust or discard, and a snapshot is created before each step so you can always go back. It runs either against Google's Gemini API or entirely offline through a local Ollama model, and adapts its treatment to the genre of the photograph rather than applying one house style to everything.
+# VenzAI
+
+VenzAI looks at a photograph with a vision model and translates what it sees
+into real Adobe Lightroom Classic develop settings — exposure, tone curve,
+white balance, the colour mixer, detail, grain, crop, vignette, and AI-detected
+local masks.
+
+**Nothing is baked into pixels.** Every change lands on the sliders you already
+use: open the Basic panel afterwards and you will find ordinary numbers you can
+adjust, undo, or throw away. A snapshot is taken before anything happens and
+after every step, so there is always a way back.
+
+It runs against Google Gemini, OpenAI, or entirely offline through a local
+Ollama model.
+
+---
+
+## What a run actually does
+
+You select one photograph and choose **Analyze and develop with VenzAI**, from
+either **Library ▸ Plug-in Extras** or **File ▸ Plug-in Extras**. Then:
+
+1. **A snapshot is taken** — `VenzAI - Original`. This is your way back.
+2. **The photo is exported** to a temporary JPEG, 2048 px, sRGB. Your original
+   file is never touched or read by anything but Lightroom.
+3. **A reference image is generated** — Gemini only. The model produces a
+   retouched version of the same frame, which becomes the target the analysis
+   works toward. It is never applied to your photo; it is a goal, not a result.
+4. **The photograph is analysed**, and the model answers with how far to move
+   each slider.
+5. **The settings are applied**, local masks included, and a snapshot is taken.
+6. **Steps 2 to 5 repeat** for the number of refinement passes you set. Each
+   pass sees the photograph as it now stands, is told what is already applied,
+   and refines it. When a pass asks for nothing more, the run stops early.
+
+A pass takes roughly 30 seconds, plus a couple of seconds for each local mask.
+
+### Local masks
+
+When the photograph genuinely calls for it, VenzAI asks Lightroom's own AI
+selection for a region — subject, people, objects, sky, landscape, background —
+and treats it separately from the rest of the frame. These arrive as real
+masks in the Masking panel, each one editable and deletable like any mask you
+would have drawn yourself.
+
+---
+
+## Requirements
+
+- **Lightroom Classic 11 or newer.** The masking API this depends on arrived in
+  SDK 11.0. Some AI mask regions (`people`, `landscape`, `objects`) came later;
+  on an older host VenzAI detects this and quietly does global-only editing
+  instead of failing.
+- **An account with one of the three providers**, or a machine running Ollama.
+- Windows or macOS. One code path serves both.
+
+---
+
+## Installing
+
+1. Download or clone this repository.
+2. In Lightroom Classic: **File ▸ Plug-in Manager ▸ Add**.
+3. Select the `VenzAI.lrdevplugin` folder — the folder itself, not a file
+   inside it.
+4. The plug-in appears in the list as *VenzAI*, with its settings underneath.
+
+To update later, replace the folder's contents and press **Reload Plug-in** in
+the Plug-in Manager. Lightroom caches the code, so a change on disk does not
+take effect until you do — the version number shown in the panel tells you
+which build is actually loaded.
+
+---
+
+## Setting up a provider
+
+Everything lives in **File ▸ Plug-in Manager ▸ VenzAI**. Pick the provider at
+the top; the box for that provider becomes editable and the others grey out.
+
+Every field has a **Detect models** button that asks the service which models
+your account can actually reach. Use it rather than typing a name from memory —
+a name that does not exist comes back as an error, and the list is the only
+current answer.
+
+### Gemini (Google, cloud)
+
+| Field | What it is |
+|---|---|
+| API key | From Google AI Studio. Stored in the system keychain, never in the preferences file. |
+| Analysis model | The model that reads the photograph and answers with settings. |
+| Reference image model | The model that generates the target image. |
+
+Gemini is the only provider that generates a reference image, because it is the
+only one whose image generation lives behind the same protocol. With the other
+two, the analysis works from the photograph alone.
+
+### OpenAI (cloud)
+
+| Field | What it is |
+|---|---|
+| API key | From the OpenAI platform. Stored in the system keychain. |
+| Analysis model | Needs to read images and answer in JSON. |
+| API base URL | `https://api.openai.com/v1` by default. Change it only for a compatible gateway. |
+
+The model list is filtered to the families that can plausibly do this job —
+embeddings, speech, transcription, image generation and moderation models are
+hidden, because none of them can read a photograph and answer with develop
+settings.
+
+### Ollama (local, offline)
+
+| Field | What it is |
+|---|---|
+| Server URL | `http://localhost:11434` by default. |
+| Model | Any vision model you have pulled, for example `qwen2.5vl`. |
+
+No API key: nothing leaves your machine. Expect a lower standard of judgement
+than the cloud models on a task this constrained — it is the right choice when
+the photographs must not leave the computer, not when you want the best result.
+
+### Refinement passes
+
+How many times the loop runs, from 1 to 5. Three is the default. More passes
+mean a more considered edit and a longer wait; the run stops by itself when the
+model stops asking for changes.
+
+---
+
+## Checking it works
+
+**Library ▸ Plug-in Extras ▸ Test VenzAI providers** touches no photograph. It
+checks every provider's configuration and asks each service whether it answers,
+then reports what it found. Run it after setting up a key, before spending a
+photograph on it.
+
+---
+
+## When something goes wrong
+
+VenzAI writes a detailed log of every run. The **Show log file** button in the
+settings panel opens the folder; the file is `VenzAI.log`:
+
+- **Windows** — `%LOCALAPPDATA%\Adobe\Lightroom\Logs\LrClassicLogs\`
+- **macOS** — `~/Library/Logs/Adobe/Lightroom/LrClassicLogs/`
+
+The log names what was asked of the model, what it answered, what was applied,
+and — importantly — what Lightroom refused to keep. A line reading
+`did NOT take` means a setting was requested and the photograph came back
+without it, which is the difference between a model that did not propose
+something and one whose proposal was overridden.
+
+Error messages in VenzAI say which of the two kinds of problem you have: one
+you can fix in the settings (a missing key, a model name that does not exist, a
+server that is not running), or a defect in the plug-in. If a dialog says it is
+a defect, the technical detail underneath is what the service reported, and the
+log has the rest.
+
+### Getting a photograph back
+
+Every run creates snapshots, visible in the Develop module's Snapshots panel:
+
+- `VenzAI - Original (provider, timestamp)` — the state before VenzAI touched
+  anything.
+- `VenzAI - Pass N (provider, timestamp)` — after each refinement pass.
+
+Click one to return to it. Lightroom's normal undo works too, and because
+nothing is written into pixels, nothing is ever lost.
+
+---
+
+## What it does not do
+
+- It edits **one photograph at a time**. There is no batch mode.
+- It does not retouch: no healing, no cloning, no object removal, no sky
+  replacement. It moves develop sliders, which is a smaller and more
+  recoverable thing.
+- The reference image is a target, never an output. VenzAI will not hand you a
+  generated picture.
+- It sends a 2048 px JPEG of your photograph to the provider you chose, unless
+  that provider is Ollama on your own machine. If that matters for the work you
+  do, use Ollama.
+
+---
+
+## Languages
+
+English and Italian. Lightroom picks the language automatically.
+
+---
+
+## For developers
+
+Adding a provider is one new file and one line in the registry: the processing
+engine never names a provider and the settings panel builds itself from what
+each driver declares. The test suite runs outside Lightroom on a Lua 5.1
+runtime:
+
+```bash
+pip install -r tests/requirements.txt
+python tests/run.py            # every suite
+python tests/run.py delta      # only suites whose name matches
+```
+
+The design documents in [docs/superpowers/specs/](docs/superpowers/specs/)
+record why the plug-in is built the way it is.
