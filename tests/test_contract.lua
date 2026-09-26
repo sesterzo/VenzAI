@@ -38,7 +38,71 @@ end
 
 local VALID_CONFIG = { apiKey = "k", model = "fake-1" }
 
+local function runAsTask(fn)
+    local co = coroutine.create(fn)
+    local returned
+    while coroutine.status(co) ~= "dead" do
+        local resumed = { coroutine.resume(co) }
+        assert(resumed[1], "the funnel raised: " .. tostring(resumed[2]))
+        returned = resumed
+    end
+    return unpack(returned, 2)
+end
+
 return {
+    -- Regression, found in Lightroom: "Detect models" died with "Yielding is
+    -- not allowed within a C or metamethod call". Every LrHttp call yields, and
+    -- in Lua 5.1 a function called through pcall - a C function - may not
+    -- yield. The funnel protected each driver call with pcall, so the one thing
+    -- every driver does was the one thing the funnel forbade.
+    --
+    -- Driven the way Lightroom drives a task: the funnel is resumed until it is
+    -- done, and a yield on the way through is not an error.
+    { "a driver method that yields, as every HTTP call does, is not a fault", function()
+        local driver = goodDriver({
+            analyze = function(request, config)
+                coroutine.yield()
+                return Contract.success({ text = "an answer" })
+            end,
+        })
+        local response = runAsTask(function()
+            return Contract.call(driver, "analyze", { prompt = "p" }, { apiKey = "k" })
+        end)
+        assert(response.ok, "yielding became " .. tostring(response.errorKind)
+            .. ": " .. tostring(response.errorDetail))
+        assert(response.text == "an answer", "got " .. tostring(response.text))
+    end },
+
+    { "listModels may yield too", function()
+        local driver = goodDriver({
+            capabilities = { analyze = true, listModels = true },
+            listModels = function(config)
+                coroutine.yield()
+                return { "fake-1", "fake-2" }
+            end,
+        })
+        local names, errorKind, errorDetail = runAsTask(function()
+            return Contract.listModels(driver, { apiKey = "k" })
+        end)
+        assert(names, "yielding became " .. tostring(errorKind) .. ": " .. tostring(errorDetail))
+        assert(#names == 2, "got " .. tostring(#names))
+    end },
+
+    -- A driver that genuinely raises must still be caught: the yield-safe pcall
+    -- has to keep protecting, not just stop complaining.
+    { "a driver that raises is still a driver_fault, not a crash", function()
+        local driver = goodDriver({
+            analyze = function() error("the driver exploded") end,
+        })
+        local response = runAsTask(function()
+            return Contract.call(driver, "analyze", { prompt = "p" }, { apiKey = "k" })
+        end)
+        assert(not response.ok, "a raising driver was reported as a success")
+        assert(response.errorKind == "driver_fault", "got " .. tostring(response.errorKind))
+        assert(tostring(response.errorDetail):find("exploded"),
+            "the detail must carry the message, got " .. tostring(response.errorDetail))
+    end },
+
     -- Regression, found in Lightroom: every driver field rendered empty and
     -- nothing the user typed was ever saved, because the panel's property-table
     -- keys were "provider.<id>.<field>". LrView reads a dot in a bound key as a

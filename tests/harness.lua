@@ -105,6 +105,27 @@ local function defaultStubs()
             startAsyncTask = function(fn) fn() end,
             sleep = function() end,
             yield = function() end,
+            -- Not a stub that just calls pcall: the whole point of the SDK's
+            -- LrTasks.pcall is that the function it protects MAY yield, which
+            -- Lua 5.1's pcall forbids ("attempt to yield across a C-call
+            -- boundary" - Lightroom words it "Yielding is not allowed within a
+            -- C or metamethod call"). Every LrHttp call yields, so a stub
+            -- without this property would let the bug through green tests.
+            -- It runs the function in its own coroutine and passes any yield
+            -- outwards, which is what the real one does.
+            pcall = function(fn, ...)
+                local co = coroutine.create(fn)
+                local passed = { ... }
+                while true do
+                    local returned = { coroutine.resume(co, unpack(passed)) }
+                    local ok = table.remove(returned, 1)
+                    if not ok then return false, returned[1] end
+                    if coroutine.status(co) == "dead" then
+                        return true, unpack(returned)
+                    end
+                    passed = { coroutine.yield(unpack(returned)) }
+                end
+            end,
         },
     }
 end

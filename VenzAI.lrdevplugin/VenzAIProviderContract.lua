@@ -23,8 +23,24 @@ never shown as a user-facing message.
 
 ------------------------------------------------------------------------------]]
 
+local LrTasks = import 'LrTasks'
+
 local VenzAILog = require 'VenzAILog'
 local log = VenzAILog.scoped("Contract")
+
+-- Every call into a driver goes through this, never through Lua's pcall.
+--
+-- A driver's whole job is an HTTP round trip, and LrHttp yields. Lua 5.1
+-- forbids yielding across a C-call boundary, and pcall is a C function, so a
+-- driver protected by pcall crashed on the one thing every driver does:
+-- Lightroom reports it as "Yielding is not allowed within a C or metamethod
+-- call". LrTasks.pcall is the SDK's answer - it protects the same way and lets
+-- the function yield. It must be called from inside a task, which every path
+-- into the funnel is: the panel, the processing run and the self-test all
+-- start with LrTasks.startAsyncTask.
+local function protectedCall(fn, ...)
+    return LrTasks.pcall(fn, ...)
+end
 
 local M = {}
 
@@ -253,7 +269,8 @@ end
 --------------------------------------------------------------------------------
 
 -- The only way the engine reaches a driver. In order: the capability must be
--- declared, the config must validate, the method runs under pcall, and the
+-- declared, the config must validate, the method runs under the yield-safe
+-- pcall above, and the
 -- value it returns must match the Response shape. Anything else becomes a
 -- Response the engine can handle, and the log names the driver and the method
 -- rather than showing an anonymous stack trace.
@@ -273,7 +290,7 @@ function M.call(driver, method, request, config)
         return M.failure("driver_fault", string.format("driver '%s' has no validate function", driverId))
     end
 
-    local validateOk, valid, reasonKey = pcall(driver.validate, config)
+    local validateOk, valid, reasonKey = protectedCall(driver.validate, config)
     if not validateOk then
         log(string.format("%s.validate raised: %s", driverId, tostring(valid)))
         return M.failure("driver_fault", tostring(valid))
@@ -283,7 +300,7 @@ function M.call(driver, method, request, config)
         return M.failure("config_invalid", nil, reasonKey or "config_unspecified")
     end
 
-    local callOk, result = pcall(driver[method], request, config)
+    local callOk, result = protectedCall(driver[method], request, config)
     if not callOk then
         log(string.format("%s.%s raised: %s", driverId, method, tostring(result)))
         return M.failure("driver_fault", tostring(result))
@@ -326,7 +343,7 @@ function M.listModels(driver, config)
         return nil, "driver_fault", string.format("driver '%s' has no validate function", driverId)
     end
 
-    local validateOk, valid, reasonKey = pcall(driver.validate, config)
+    local validateOk, valid, reasonKey = protectedCall(driver.validate, config)
     if not validateOk then
         log(string.format("%s.validate raised during listModels: %s", driverId, tostring(valid)))
         return nil, "driver_fault", tostring(valid)
@@ -337,7 +354,7 @@ function M.listModels(driver, config)
         return nil, "config_invalid", nil, reasonKey or "config_unspecified"
     end
 
-    local callOk, names, errorKind, errorDetail = pcall(driver.listModels, config)
+    local callOk, names, errorKind, errorDetail = protectedCall(driver.listModels, config)
     if not callOk then
         log(string.format("%s.listModels raised: %s", driverId, tostring(names)))
         return nil, "driver_fault", tostring(names)
