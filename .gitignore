@@ -19,3 +19,12 @@ desktop.ini
 
 # Records the bundle hash at the last build bump (see .claude/hooks/bump-build.sh).
 .claude/.build-stamp
+
+# Claude Code workspace: hooks, settings and the build-number stamp. Local
+# tooling, not part of the plug-in.
+.claude/
+
+# Working documents - specs, plans and design notes. Kept on disk while the
+# work is in progress; they are not what someone downloading the plug-in came
+# for, and they go stale the moment the code moves past them.
+docs/

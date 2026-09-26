@@ -217,5 +217,5 @@ python tests/run.py            # every suite
 python tests/run.py delta      # only suites whose name matches
 ```
 
-The design documents in [docs/superpowers/specs/](docs/superpowers/specs/)
-record why the plug-in is built the way it is.
+The commit history is where the reasoning lives: each message says what was
+wrong and why the fix is shaped the way it is.
