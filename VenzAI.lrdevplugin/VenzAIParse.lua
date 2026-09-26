@@ -18,6 +18,17 @@ VenzAIJson), so the parameter is named text and the gsub is gone.
 ------------------------------------------------------------------------------]]
 
 local VenzAILog = require 'VenzAILog'
+
+-- Resolved lazily: VenzAIDelta requires this module for its key tables, so a
+-- require at load time here would be a cycle. By the time a model answer is
+-- being parsed, both modules are loaded.
+local DeltaModule
+local Delta = setmetatable({}, {
+    __index = function(_, field)
+        DeltaModule = DeltaModule or require 'VenzAIDelta'
+        return DeltaModule[field]
+    end,
+})
 local log = VenzAILog.log
 
 local M = {}
@@ -130,7 +141,8 @@ end
 -- empirically against the documented "local_*" vocabulary from
 -- LrDevelopController.html (see VenzAI_APIDiag.lrdevplugin's
 -- LOCAL_MASK_API_FINDINGS.md for the full investigation and field mapping).
-local LOCAL_VALID_KEYS = {
+-- Exported because VenzAIDelta classifies these keys as movements too.
+M.LOCAL_VALID_KEYS = {
     local_Temperature = true, local_Tint = true, local_Exposure = true, local_Contrast = true,
     local_Highlights = true, local_Shadows = true, local_Whites = true, local_Blacks = true,
     local_Clarity = true, local_Texture = true, local_Dehaze = true, local_Saturation = true,
@@ -158,7 +170,10 @@ local LOCAL_RANGES = {
 M.MASK_SUBJECT_TYPES = {
     subject = true, sky = true, background = true, people = true, landscape = true, objects = true,
 }
-M.MAX_MASKS_PER_PASS = 2
+-- No arbitrary cap. The mechanism caps itself: createNewMask("aiSelection")
+-- knows these six regions and no more, and a second mask of a type already
+-- used would select the same pixels, so it is rejected as a duplicate below.
+-- A fixed number on top of that only told the model to do less.
 
 -- Extracts and validates the develop settings from the model's JSON response.
 -- CropLeft/Top/Right/Bottom and CropAngle remain RELATIVE to the frame seen in
@@ -199,13 +214,23 @@ function M.parseModelSettings(text, currentlyGrayscale)
         return nil, "No parameter extracted from the JSON response."
     end
 
-    -- Generic defensive validation: every parameter must fall within the
-    -- physically valid range for Lightroom. If the model gets it wrong (e.g.
-    -- confusing an absolute value with a delta, as happened with
-    -- Temperature=8 instead of 5600K), discard it instead of applying it blindly.
+    -- Range validation applies ONLY to the keys that are still positions.
+    --
+    -- This loop used to run over every key, and it was right while the model
+    -- answered absolutes. Under delta semantics the numbers are movements, and
+    -- a movement legitimately sits outside the slider's absolute range: -20 on
+    -- Sharpness (range 0..150) is an ordinary request to sharpen less, and
+    -- every white-balance movement is below Temperature's 2000 floor. Checking
+    -- a movement against an absolute range threw away the correction instead of
+    -- applying it - silently, with the photograph left half-edited.
+    --
+    -- The guard this loop was built for has not disappeared: VenzAIDelta clamps
+    -- the SUM at the range, and rejects a movement so large it can only be an
+    -- absolute the model sent out of habit. It moved downstream, where the two
+    -- kinds of number can be told apart.
     for key, range in pairs(RANGES) do
         local v = developSettings[key]
-        if v and (v < range[1] or v > range[2]) then
+        if v and Delta.ABSOLUTE_KEYS[key] and (v < range[1] or v > range[2]) then
             log(string.format("%s out of range (%s, expected %s..%s), discarded.", key, tostring(v), tostring(range[1]), tostring(range[2])))
             developSettings[key] = nil
         end
@@ -395,10 +420,17 @@ function M.parseMasks(text)
             local params = {}
             local count = 0
             for key, val in block:gmatch('"(local_%a+)"%s*:%s*(%-?%d+%.?%d*)') do
-                if LOCAL_VALID_KEYS[key] then
+                if M.LOCAL_VALID_KEYS[key] then
                     local numVal = tonumber(val)
+                    -- Same reasoning as the global loop above: a local value
+                    -- is a movement now, and -10 on local_ToningSaturation
+                    -- (range 0..100) is an ordinary request. Only the local
+                    -- keys that are still positions are range-checked here;
+                    -- the sum is clamped in VenzAIDelta.
                     local range = LOCAL_RANGES[key]
-                    if range and numVal >= range[1] and numVal <= range[2] then
+                    local isPosition = Delta.ABSOLUTE_KEYS[key]
+                    if not isPosition or not range
+                        or (numVal >= range[1] and numVal <= range[2]) then
                         params[key] = numVal
                         count = count + 1
                     else
@@ -414,13 +446,6 @@ function M.parseMasks(text)
             else
                 log("Mask type '" .. maskType .. "' had no valid local_* parameter, discarded.")
             end
-        end
-    end
-
-    if #masks > M.MAX_MASKS_PER_PASS then
-        log(string.format("%d masks proposed, capping to %d.", #masks, M.MAX_MASKS_PER_PASS))
-        for i = #masks, M.MAX_MASKS_PER_PASS + 1, -1 do
-            table.remove(masks, i)
         end
     end
 
@@ -440,6 +465,15 @@ end
 -- that is indistinguishable from a model that never proposed them. This turns
 -- the difference into a log line instead of an afternoon at the sliders.
 local FLOAT_TOLERANCE = 1e-4
+
+-- The valid range of one managed key, global or local, or nil for a key that
+-- has no range (the HSL and GrayMixer channels are generated, and the crop
+-- bounds are fractions). Exposed because VenzAIDelta clamps against it: under
+-- delta semantics a sum outside the range must be CLAMPED, never discarded,
+-- or the only correction asked for is thrown away.
+function M.rangeFor(key)
+    return RANGES[key] or LOCAL_RANGES[key]
+end
 
 function M.settingsNotKept(asked, actual)
     local missed = {}

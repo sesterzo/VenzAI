@@ -16,6 +16,7 @@ local FILES = {
     "VenzAILog",
     "VenzAIMasks",
     "VenzAIMessages",
+    "VenzAIDelta",
     "VenzAIParse",
     "VenzAIPrompts",
     "VenzAIProcess",

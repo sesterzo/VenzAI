@@ -36,6 +36,7 @@ local Contract = require 'VenzAIProviderContract'
 local Messages = require 'VenzAIMessages'
 local Prompts = require 'VenzAIPrompts'
 local Parse = require 'VenzAIParse'
+local Delta = require 'VenzAIDelta'
 local Masks = require 'VenzAIMasks'
 
 local log = VenzAILog.log
@@ -215,12 +216,46 @@ LrTasks.startAsyncTask(function()
     -- subsequent passes.
     local priorCrop = { cl = 0, ct = 0, cr = 1, cb = 1 }
     local priorAngle = 0
+
+    -- The absolute state the photograph is in, which the model's movements are
+    -- added to. Seeded from what the photo actually reports, so a file that
+    -- arrives already edited is a starting point rather than a surprise.
+    -- Which scale this file puts Temperature on. Read from the FILE, never
+    -- inferred from the value: a raw whose white balance is still "As Shot"
+    -- reports no Kelvin, and reading that absence as the -100..100 scale wrote
+    -- an 18 K white balance onto a NEF and turned the photograph solid blue.
+    local okFormat, fileFormat = LrTasks.pcall(function()
+        return photo:getRawMetadata("fileFormat")
+    end)
+    local temperatureScale = Delta.temperatureScale(okFormat and fileFormat or nil)
+    log(string.format("File format %s: Temperature is on the %s scale.",
+        tostring(okFormat and fileFormat or "unknown"), temperatureScale))
+
+    local absoluteState = {}
+    local okSeed, seeded = LrTasks.pcall(function() return photo:getDevelopSettings() end)
+    if okSeed and type(seeded) == "table" then
+        for key in pairs(Parse.VALID_KEYS) do
+            if type(seeded[key]) == "number" then
+                absoluteState[key] = seeded[key]
+            end
+        end
+        log("Absolute state seeded from the photograph.")
+    else
+        log("Could not read the photograph's settings to seed the state; " ..
+            "movements will start from each parameter's neutral value.")
+    end
     local completedPasses = 0
     local referenceImage = nil
     -- Tracks, per region "type" (sky, subject, ...), the ID of the mask
     -- created for it in an earlier pass, so later passes UPDATE that same
     -- mask instead of stacking a new one on top - see VenzAIMasks.
     local maskIDsByType = {}
+
+    -- What each mask is currently carrying, accumulated across passes exactly
+    -- the way Lightroom accumulates it: a value a later pass does not mention
+    -- stays. Reported back to the model each pass, so it refines its own local
+    -- work instead of re-inventing it on a mask that is still there.
+    local appliedMasksByType = {}
 
     -- Every failure inside the loop resolves the same way, so the decision
     -- lives in one place: if no pass has been applied yet there is nothing to
@@ -274,19 +309,17 @@ LrTasks.startAsyncTask(function()
             break
         end
 
-        -- From the second pass onward the model is told which settings produced
-        -- the image it is about to look at, so that "this looks right now"
-        -- becomes "keep this value" instead of "this parameter is not needed",
-        -- which applyDevelopSettings would write back as a reset. On pass 1
-        -- there is nothing applied yet, so the block is omitted entirely.
-        local currentSettingsBlock, isGrayscale = nil, false
-        if pass > 1 then
-            currentSettingsBlock, isGrayscale = Prompts.readCurrentSettings(photo)
-            if currentSettingsBlock then
-                log(string.format("Pass %d: current settings reported to the model:\n%s", pass, currentSettingsBlock))
-            else
-                log(string.format("Pass %d: no current settings to report.", pass))
-            end
+        -- Reported on EVERY pass, pass 1 included. Under delta semantics this
+        -- block is no longer only "what you already did": it is where the model
+        -- learns which scale each slider is on - above all whether this file
+        -- reports Temperature in Kelvin or on the -100..100 scale, which decides
+        -- the units of the movement it is about to ask for. Pass 1 makes the
+        -- largest corrections, and it was the one pass told nothing.
+        local currentSettingsBlock, isGrayscale = Prompts.readCurrentSettings(photo)
+        if currentSettingsBlock then
+            log(string.format("Pass %d: current settings reported to the model:\n%s", pass, currentSettingsBlock))
+        else
+            log(string.format("Pass %d: no current settings to report.", pass))
         end
 
         -- The reference image is a declared CAPABILITY, not a provider. A driver
@@ -336,7 +369,7 @@ LrTasks.startAsyncTask(function()
             table.insert(parts, { image = referenceImage })
         end
         table.insert(parts, { text = Prompts.buildAnalysisPrompt(
-            pass, passes, referenceImage ~= nil, currentSettingsBlock) })
+            pass, passes, referenceImage ~= nil, currentSettingsBlock, appliedMasksByType) })
 
         log(string.format("Pass %d: sending the analysis request to %s (%s)...",
             pass, driver.id, tostring(config.model)))
@@ -430,9 +463,37 @@ LrTasks.startAsyncTask(function()
         end
 
         local masks = Parse.parseMasks(response.text)
+        -- One report per mask, so convergence can ask whether a mask actually
+        -- requested anything instead of whether one was merely named.
+        local maskReports = {}
+
+        -- The model answered with MOVEMENTS. Lightroom only accepts absolutes,
+        -- so the sum happens here and the log says what each one did.
+        local absolute, report = Delta.apply(absoluteState, developSettings, temperatureScale)
+        absoluteState = absolute
+
+        for _, row in ipairs(report) do
+            if row.outcome == "clamped" then
+                log(string.format("Pass %d: %s asked %+.4g from %.4g, clamped to %.4g.",
+                    pass, row.key, row.asked, row.from, row.to))
+            elseif row.outcome == "implausible" then
+                log(string.format("Pass %d: %s asked %+.4g, larger than its whole range: dropped.",
+                    pass, row.key, row.asked))
+            end
+        end
+
+        -- A raw left at "As Shot" exposes no Kelvin, so a Temperature
+        -- movement had nothing to move from and was refused. Switching the
+        -- white balance to Custom makes Lightroom fill in the as-shot value,
+        -- so the next pass can move it. Done once, only when it is needed.
+        if Delta.needsWhiteBalanceUnlock(report) then
+            absolute.WhiteBalance = "Custom"
+            log(string.format("Pass %d: white balance set to Custom so that the next " ..
+                "pass has a Kelvin value to move from.", pass))
+        end
 
         catalog:withWriteAccessDo("VenzAI develop (pass " .. pass .. ")", function()
-            photo:applyDevelopSettings(developSettings)
+            photo:applyDevelopSettings(absolute)
         end)
         log(string.format("Pass %d: global parameters applied.", pass))
 
@@ -446,7 +507,33 @@ LrTasks.startAsyncTask(function()
             log(string.format("Pass %d: could not read the settings back to check them: %s",
                 pass, tostring(applied)))
         else
-            local missed = Parse.settingsNotKept(developSettings, applied)
+            -- Every pass of a real run reported ColorGradeShadowHue/Sat and
+            -- ColorGradeHighlightHue/Sat as "photo now reports nil": the key is
+            -- not merely refused, it is absent from the settings table. That
+            -- says Lightroom stores colour grading under names we are not
+            -- using, so on the first pass print the ones it DOES report and let
+            -- the log name them, instead of guessing at the spelling.
+            if pass == 1 then
+                local seen = {}
+                for key in pairs(applied) do
+                    if key:find("ColorGrade") or key:find("SplitToning") then
+                        table.insert(seen, key .. " = " .. tostring(applied[key]))
+                    end
+                end
+                table.sort(seen)
+                if #seen == 0 then
+                    log("Colour grading: the photo reports no ColorGrade* or SplitToning* key at all.")
+                else
+                    log("Colour grading: the keys this photo actually reports are:")
+                    for _, line in ipairs(seen) do log("    " .. line) end
+                end
+            end
+
+            -- `absolute`, not `developSettings`: the model answered movements,
+            -- and what we asked Lightroom for is the sum. Comparing a movement
+            -- against what the photo reports would call every applied value a
+            -- failure.
+            local missed = Parse.settingsNotKept(absolute, applied)
             if #missed == 0 then
                 log(string.format("Pass %d: every requested setting was kept.", pass))
             else
@@ -464,9 +551,44 @@ LrTasks.startAsyncTask(function()
         -- OUTSIDE the catalog:withWriteAccessDo gate, after it completes.
         if #masks > 0 then
             progressScope:setCaption(LOC("$$$/VenzAI/Progress/PassMasking=Pass ^1/^2: applying local mask corrections...", tostring(pass), tostring(passes)))
-            local appliedMasks = Masks.applyMasksToPhoto(photo, masks, maskIDsByType)
+
+            -- The model's local values are movements too. Sum them onto what
+            -- the mask already carries BEFORE writing: setValue writes a
+            -- position, not an offset, and a key this pass did not mention is
+            -- still on the mask, so absence is not zero.
+            local pendingByType = {}
+            for _, mask in ipairs(masks) do
+                local carried = appliedMasksByType[mask.type] or {}
+                local absoluteParams, maskReport = Delta.apply(carried, mask.params, "relative")
+                for _, row in ipairs(maskReport) do
+                    if row.outcome == "clamped" or row.outcome == "implausible" then
+                        log(string.format("Pass %d: mask '%s' %s asked %+.4g -> %s.",
+                            pass, mask.type, row.key, row.asked, row.outcome))
+                    end
+                end
+                mask.params = absoluteParams
+                pendingByType[mask.type] = absoluteParams
+                table.insert(maskReports, maskReport)
+            end
+
+            local appliedMasks, writtenTypes = Masks.applyMasksToPhoto(photo, masks, maskIDsByType)
             log(string.format("Pass %d: %d/%d local mask(s) applied.", pass, appliedMasks, #masks))
+
+            -- Recorded only for the masks Lightroom really wrote. A mask whose
+            -- region the detector never found, or whose selection landed
+            -- elsewhere, carries nothing - and telling the next pass otherwise
+            -- would have it believe a region was handled while it stayed wrong.
+            for maskType, params in pairs(pendingByType) do
+                if writtenTypes and writtenTypes[maskType] then
+                    appliedMasksByType[maskType] = params
+                else
+                    log(string.format("Pass %d: mask '%s' was not written, so its values " ..
+                        "are not recorded as applied.", pass, maskType))
+                end
+            end
         end
+
+
 
         local snapshotName = LOC("$$$/VenzAI/Snapshot/Pass=VenzAI - Pass ^1 (^2, ^3)",
             tostring(pass), driver.id, os.date("%Y-%m-%d %H:%M:%S"))
@@ -475,6 +597,17 @@ LrTasks.startAsyncTask(function()
         end)
         completedPasses = pass
         log(string.format("Pass %d: parameters applied successfully, snapshot '%s' created.", pass, snapshotName))
+
+        -- Placed after the snapshot rather than before it, as the plan had it:
+        -- this pass DID apply something, so it earns its snapshot like any
+        -- other, and breaking earlier would have meant duplicating that block.
+        -- `report` is the one from Delta.apply on the global settings above.
+        if Delta.hasConverged(report, maskReports) then
+            log(string.format("Pass %d: the model asked for nothing that moved the " ..
+                "photograph; it has arrived. Skipping the remaining %d pass(es).",
+                pass, passes - pass))
+            break
+        end
 
     end
 

@@ -50,11 +50,27 @@ return {
         assert(s.Exposure2012 == -0.25 and s.Contrast2012 == 15)
     end },
 
-    { "an out-of-range value is discarded, not clamped", function()
-        -- The Temperature=8 case: the model confused an absolute value with a
-        -- delta. Applying 8 Kelvin would be worse than applying nothing.
+    { "a movement is no longer range-checked against the absolute scale", function()
+        -- This test was written for the Temperature=8 defect, when the model
+        -- answered absolutes and 8 Kelvin was impossible. Under delta semantics
+        -- 8 is an ordinary movement - 8 K warmer - and dropping it here threw
+        -- away every white-balance correction, since Temperature's absolute
+        -- range starts at 2000. The defence did not disappear: VenzAIDelta
+        -- rejects a movement large enough to be an absolute, and clamps the sum.
         local s = Parse.parseModelSettings('{"Temperature": 8, "Exposure2012": 0.5}', false)
-        assert(s.Temperature == nil, "an impossible Temperature must be dropped")
+        assert(s.Temperature == 8, "a small movement must survive the parser")
+        assert(s.Exposure2012 == 0.5, "a valid neighbour must survive")
+
+        local Delta = require 'VenzAIDelta'
+        local absolute = Delta.apply({ Temperature = 5200 }, s)
+        assert(absolute.Temperature == 5208, "got " .. tostring(absolute.Temperature))
+    end },
+
+    { "a position is still range-checked in the parser", function()
+        -- PostCropVignetteStyle is an enumeration, so it never became a
+        -- movement and the old guard still applies to it.
+        local s = Parse.parseModelSettings('{"PostCropVignetteStyle": 9, "Exposure2012": 0.5}', false)
+        assert(s.PostCropVignetteStyle == nil, "an impossible style must be dropped")
         assert(s.Exposure2012 == 0.5, "a valid neighbour must survive")
     end },
 
@@ -135,12 +151,24 @@ return {
         assert(#masks == 0)
     end },
 
-    { "more masks than the per-pass cap are trimmed", function()
+    -- There is no arbitrary cap any more. The ceiling is the mechanism itself:
+    -- createNewMask("aiSelection", type) knows six regions, and a second mask
+    -- of a type already used would select the same pixels, so it is rejected
+    -- as a duplicate. Six is what the photograph can actually carry.
+    { "all six region types may be used in one pass", function()
         local masks = Parse.parseMasks('{"Masks": [' ..
             '{"type": "sky", "local_Exposure": -0.4},' ..
             '{"type": "subject", "local_Exposure": 0.3},' ..
-            '{"type": "background", "local_Exposure": 0.1}]}')
-        assert(#masks == Parse.MAX_MASKS_PER_PASS, "expected " .. Parse.MAX_MASKS_PER_PASS)
+            '{"type": "background", "local_Exposure": 0.1},' ..
+            '{"type": "people", "local_Texture": -10},' ..
+            '{"type": "landscape", "local_Clarity": 12},' ..
+            '{"type": "objects", "local_Saturation": 8}]}')
+        assert(#masks == 6, "expected all six, got " .. #masks)
+    end },
+
+    { "no arbitrary per-pass cap is declared any more", function()
+        assert(Parse.MAX_MASKS_PER_PASS == nil,
+            "a fixed number is back; the type set is the only ceiling")
     end },
 
     { "no Masks key at all is an empty list, not an error", function()
