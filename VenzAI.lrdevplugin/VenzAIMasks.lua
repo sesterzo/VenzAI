@@ -116,7 +116,7 @@ function M.applyMasksToPhoto(photo, masks, maskIDsByType)
         return 0
     end
 
-    if not maskingApiAvailable() then
+    if not M.maskingApiAvailable() then
         log("This Lightroom version does not expose the masking API: skipping local corrections, global settings are unaffected.")
         return 0
     end
