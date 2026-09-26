@@ -24,6 +24,7 @@ local FILES = {
     "VenzAIProviderOllama",
     "VenzAIProviderOpenAI",
     "VenzAIProviderRegistry",
+    "VenzAISelfTest",
     "VenzAISettings",
 }
 

@@ -39,6 +39,15 @@ return {
             title = LOC "$$$/VenzAI/Menu/AnalyzeAndDevelop=Analyze and develop with VenzAI",
             file = "VenzAIProcess.lua",
         },
+        -- Touches no photo: it checks every registered driver against the
+        -- contract, its configuration, and whether its service answers. Not in
+        -- LrExportMenuItems, which is for acting on photos. This is the only
+        -- manifest change the driver design needs, and adding a provider later
+        -- does not touch this file.
+        {
+            title = LOC "$$$/VenzAI/Menu/TestProviders=Test VenzAI providers",
+            file = "VenzAISelfTest.lua",
+        },
     },
 
     LrExportMenuItems = {
