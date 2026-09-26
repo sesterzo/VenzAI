@@ -18,6 +18,8 @@ the same set. One table, two readers; two tables would drift.
 
 ------------------------------------------------------------------------------]]
 
+local LrTasks = import 'LrTasks'
+
 local VenzAILog = require 'VenzAILog'
 local Parse = require 'VenzAIParse'
 
@@ -175,7 +177,13 @@ local SETTINGS_NOT_REPORTED = {
 -- SharpenRadius = 1.0) is non-zero and therefore always listed.
 -- Returns the formatted block (or nil) and whether the photo is in B&W.
 function M.readCurrentSettings(photo)
-    local ok, settings = pcall(function() return photo:getDevelopSettings() end)
+    -- LrTasks.pcall, not Lua's pcall: reading the catalog can yield, and a
+    -- function called through pcall - a C function - may not yield in Lua 5.1.
+    -- With the wrong one this failed on EVERY pass ("Yielding is not allowed
+    -- within a C or metamethod call"), so every pass after the first was told
+    -- nothing about what the previous one had applied and re-proposed settings
+    -- from scratch. The refinement loop was refining nothing.
+    local ok, settings = LrTasks.pcall(function() return photo:getDevelopSettings() end)
     if not ok or type(settings) ~= "table" then
         log("Could not read the current develop settings: " .. tostring(settings))
         return nil, false

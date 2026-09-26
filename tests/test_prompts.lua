@@ -6,6 +6,34 @@ local function fakePhoto(settings)
 end
 
 return {
+    -- Regression, found in a real run: reading the develop settings raised
+    -- "Yielding is not allowed within a C or metamethod call" on every pass,
+    -- six times out of six, so passes 2 and 3 were told nothing about what
+    -- pass 1 had already applied. The refinement loop stopped refining and
+    -- started re-proposing from scratch, overwriting its own earlier work -
+    -- which is what "the results are poor" looked like from outside.
+    --
+    -- The catalog call can yield, exactly like an HTTP call, so it may not be
+    -- protected by Lua's pcall. Driven here the way Lightroom drives a task.
+    { "reading the settings survives a catalog call that yields", function()
+        local yielding = { getDevelopSettings = function()
+            coroutine.yield()
+            return { Exposure2012 = 0.8 }
+        end }
+
+        local co = coroutine.create(function()
+            return Prompts.readCurrentSettings(yielding)
+        end)
+        local block
+        while coroutine.status(co) ~= "dead" do
+            local resumed = { coroutine.resume(co) }
+            assert(resumed[1], "readCurrentSettings raised: " .. tostring(resumed[2]))
+            block = resumed[2]
+        end
+        assert(block, "the settings came back empty, so the pass would run blind")
+        assert(block:find("Exposure2012", 1, true), "got " .. tostring(block))
+    end },
+
     { "the analysis prompt is in English and asks for JSON only", function()
         local prompt = Prompts.buildAnalysisPrompt(1, 3, false, nil)
         assert(prompt:find("JSON", 1, true), "the prompt must ask for JSON")
