@@ -3,15 +3,20 @@
 PluginInfoProvider.lua
 The VenzAI section shown in File > Plug-in Manager.
 
-Defaults and the reading/writing of every setting live in VenzAISettings.lua,
-shared with VenzAIProcess.lua. Logging goes through VenzAILog.lua, which
-writes to Lightroom's own per-platform log folder instead of into the plug-in
-bundle (which is not writable once the plug-in is installed for real).
+Rendered from declarations, not from a layout. It iterates the driver registry,
+emits one group box per driver and one row per field that driver declares, and
+enables the box bound to activeProvider. Adding a provider does not touch this
+file - which is the point, and the reason Ollama declaring no API key at all is
+worth checking by eye.
+
+Defaults and the reading and writing of every setting live in VenzAISettings,
+shared with VenzAIProcess. Logging goes through VenzAILog, which writes to
+Lightroom's own per-platform log folder rather than into the plug-in bundle
+(which is not writable once the plug-in is installed for real).
 
 ------------------------------------------------------------------------------]]
 
 local LrView = import 'LrView'
-local LrHttp = import 'LrHttp'
 local LrTasks = import 'LrTasks'
 local LrDialogs = import 'LrDialogs'
 local LrFunctionContext = import 'LrFunctionContext'
@@ -21,131 +26,188 @@ local LrFileUtils = import 'LrFileUtils'
 
 local VenzAILog = require 'VenzAILog'
 local Settings = require 'VenzAISettings'
+local Registry = require 'VenzAIProviderRegistry'
+local Messages = require 'VenzAIMessages'
 
 local log = VenzAILog.scoped("Settings")
 
--- Seconds to wait on the Ollama /api/tags call. Short on purpose: this is a
--- "is the server there?" probe and the user is staring at a dialog.
-local DETECT_TIMEOUT = 10
-
 log("=== PluginInfoProvider module loaded ===")
 Settings.applyDefaults()
-Settings.migrateApiKeyFromPrefs()
+Settings.purgeLegacyPlainTextKey()
 
-local function isGeminiTransform(value)
-    return value == "gemini"
+-- Property-table keys are namespaced exactly as the prefs are, so two drivers
+-- declaring a field called "model" do not collide in the binding either.
+local function propertyKey(driverId, fieldKey)
+    return string.format("provider.%s.%s", driverId, fieldKey)
 end
 
-local function isLocalTransform(value)
-    return value == "local"
+-- Forward declaration: groupForDriver closes over this, and it is defined below.
+-- Without the declaration the closure would capture a global instead and the
+-- button would silently do nothing.
+local detectModelsAction
+
+-- The popup that chooses the active provider is built from the registry, so a
+-- new driver appears here with no edit to this file.
+local function providerItems()
+    local items = {}
+    for _, driver in ipairs(Registry.all()) do
+        table.insert(items, { title = LOC(driver.displayName), value = driver.id })
+    end
+    return items
 end
 
--- Queries Ollama's native /api/tags endpoint to list the models already
--- pulled on the server at baseUrl. Returns an array of names (e.g.
--- "qwen2.5vl:latest") or nil + an error message.
-local function detectOllamaModels(baseUrl)
-    local url = baseUrl .. "/api/tags"
-    log("detectOllamaModels: GET " .. url)
-
-    local body, headers = LrHttp.get(url, nil, DETECT_TIMEOUT)
-    local status = headers and headers.status
-
-    -- On a connection failure LrHttp returns no body and no status. The SDK
-    -- docs only describe the success shape, but in practice the second return
-    -- value carries an `error` table with the transport failure reason.
-    -- Reading it is guarded and purely additive: if a future version stops
-    -- providing it we fall through to the generic "HTTP nil" message below.
-    if headers and headers.error then
-        local reason = headers.error.name or headers.error.errorCode or "connection failed"
-        log("detectOllamaModels: transport error: " .. tostring(reason))
-        return nil, string.format("%s (%s)", tostring(reason), url)
+-- One group box per driver, one row per declared field. The role picks the
+-- control: a secret gets a password_field, everything else an edit_field. A
+-- field with role "model" also gets the Detect button, but only when its driver
+-- declares the listModels capability.
+--
+-- "bind_to_object = propertyTable" is explicit on the group box: without it,
+-- controls nested inside group_box/row do not resolve the binding and the fields
+-- render empty even when propertyTable holds the right value. "enabled" stays on
+-- individual controls, not on the group box.
+local function groupForDriver(f, propertyTable, driver)
+    local function enabledForThisDriver()
+        return LrView.bind {
+            key = "activeProvider",
+            transform = function(value) return value == driver.id end,
+        }
     end
 
-    log(string.format("detectOllamaModels: status=%s", tostring(status)))
+    local rows = {
+        bind_to_object = propertyTable,
+        title = LOC(driver.displayName),
+        fill_horizontal = 1,
+    }
 
-    if not body or status ~= 200 then
-        return nil, string.format("HTTP %s contacting %s", tostring(status), url)
+    for _, field in ipairs(driver.settingsFields) do
+        local key = propertyKey(driver.id, field.key)
+
+        local control
+        if field.role == "secret" then
+            control = f:password_field {
+                value = LrView.bind(key),
+                width_in_chars = 30,
+                enabled = enabledForThisDriver(),
+            }
+        else
+            control = f:edit_field {
+                value = LrView.bind(key),
+                width_in_chars = 30,
+                enabled = enabledForThisDriver(),
+            }
+        end
+
+        local row = {
+            spacing = f:control_spacing(),
+            f:static_text {
+                title = LOC(field.label),
+                width = LrView.share "venzai_label_width",
+                enabled = enabledForThisDriver(),
+            },
+            control,
+        }
+
+        if field.role == "model" and driver.capabilities.listModels then
+            table.insert(row, f:push_button {
+                title = LOC "$$$/VenzAI/Settings/DetectModels=Detect models",
+                enabled = enabledForThisDriver(),
+                action = function() detectModelsAction(propertyTable, driver, field) end,
+            })
+        end
+
+        table.insert(rows, f:row(row))
+
+        if field.role == "secret" then
+            table.insert(rows, f:row { f:static_text {
+                title = LOC "$$$/VenzAI/Settings/SecretNote=The value is stored encrypted in the system keychain, not in the preferences file.",
+                enabled = enabledForThisDriver(),
+            } })
+        end
     end
 
-    local models = {}
-    for name in body:gmatch('"name"%s*:%s*"([^"]+)"') do
-        table.insert(models, name)
+    if #driver.settingsFields == 0 then
+        table.insert(rows, f:row { f:static_text {
+            title = LOC "$$$/VenzAI/Settings/NoSettings=This provider needs no settings.",
+        } })
     end
 
-    log(string.format("detectOllamaModels: found %d model(s): %s", #models, table.concat(models, ", ")))
-
-    if #models == 0 then
-        return nil, "No models found (server reachable but no models are pulled yet)."
-    end
-
-    return models
+    return f:group_box(rows)
 end
 
--- Action for the "Detect models" button: queries Ollama and updates
--- propertyTable.ollamaModel with the result (with a small picker if more
--- than one is found). Must run in an async task because LrHttp.get yields,
--- which isn't allowed directly inside a button callback.
-local function detectModelsAction(propertyTable)
-    log("Button 'Detect models' clicked.")
+-- Works for any driver declaring listModels: there is no Ollama-specific button
+-- any more. Must run inside an async task, because LrHttp yields and a button
+-- callback may not.
+function detectModelsAction(propertyTable, driver, field)
+    log(string.format("'Detect models' clicked for %s.", driver.id))
     LrTasks.startAsyncTask(function()
-        LrFunctionContext.callWithContext("VenzAI_DetectOllamaModels", function(context)
-            local baseUrl = propertyTable.ollamaBaseUrl
-            if baseUrl == nil or baseUrl == "" then
-                baseUrl = Settings.DEFAULTS.ollamaBaseUrl
-                log("ollamaBaseUrl was empty, using default " .. baseUrl .. " for detection.")
+        LrFunctionContext.callWithContext("VenzAI_DetectModels", function(context)
+            -- Read the config from the panel's live values rather than from
+            -- prefs: the user may have just typed a new URL.
+            local config = {}
+            for _, declared in ipairs(driver.settingsFields) do
+                config[declared.key] = propertyTable[propertyKey(driver.id, declared.key)]
             end
 
-            local models, err = detectOllamaModels(baseUrl)
+            local names, errorKind, errorDetail = driver.listModels(config)
 
-            if not models then
-                log("Detect models failed: " .. tostring(err))
+            if not names then
+                log(string.format("Detect models failed for %s: %s (%s)",
+                    driver.id, tostring(errorKind), tostring(errorDetail)))
+                local title, body = Messages.forError(errorKind or "unknown",
+                    driver.displayName, config[field.key])
+                LrDialogs.message(title, body .. Messages.technicalSection(errorDetail), "warning")
+                return
+            end
+
+            -- Reachable but empty is NOT a failure, and saying so sends the user
+            -- to the right place: install a model, rather than hunt for a network
+            -- problem that is not there.
+            if #names == 0 then
+                log(string.format("%s is reachable but has no model installed.", driver.id))
                 LrDialogs.message(
-                    LOC "$$$/VenzAI/Settings/Local/DetectErrorTitle=Could not detect Ollama models",
-                    LOC("$$$/VenzAI/Settings/Local/DetectErrorBody=^1\n\nCheck that Ollama is running and reachable at ^2.", tostring(err), baseUrl),
-                    "warning"
-                )
+                    LOC "$$$/VenzAI/Settings/NoModelsTitle=No models are installed",
+                    LOC("$$$/VenzAI/Settings/NoModelsBody=^1 answered, but has no model installed yet.\n\nInstall one on that service, then detect again.",
+                        LOC(driver.displayName)),
+                    "info")
                 return
             end
 
-            if #models == 1 then
-                log("Only one model detected, auto-selecting: " .. models[1])
-                propertyTable.ollamaModel = models[1]
+            if #names == 1 then
+                log("Only one model detected, auto-selecting: " .. names[1])
+                propertyTable[propertyKey(driver.id, field.key)] = names[1]
                 return
             end
-            log(string.format("%d models detected, showing picker.", #models))
 
-            -- Multiple models found: show a small picker instead of choosing one at random.
+            log(string.format("%d models detected, showing picker.", #names))
             local pickerProps = LrBinding.makePropertyTable(context)
-            pickerProps.selectedModel = models[1]
-
-            local f = LrView.osFactory()
+            pickerProps.selected = names[1]
             local items = {}
-            for _, name in ipairs(models) do
+            for _, name in ipairs(names) do
                 table.insert(items, { title = name, value = name })
             end
 
+            local viewFactory = LrView.osFactory()
             local result = LrDialogs.presentModalDialog {
-                title = LOC "$$$/VenzAI/Settings/Local/DetectPickerTitle=Select an Ollama model",
-                contents = f:popup_menu {
+                title = LOC "$$$/VenzAI/Settings/PickModelTitle=Select a model",
+                contents = viewFactory:popup_menu {
                     bind_to_object = pickerProps,
-                    value = LrView.bind "selectedModel",
+                    value = LrView.bind "selected",
                     items = items,
                     width_in_chars = 30,
                 },
             }
 
-            log("Picker dialog result: " .. tostring(result))
             if result == "ok" then
-                log("User picked model: " .. tostring(pickerProps.selectedModel))
-                propertyTable.ollamaModel = pickerProps.selectedModel
+                log("User picked model: " .. tostring(pickerProps.selected))
+                propertyTable[propertyKey(driver.id, field.key)] = pickerProps.selected
             end
         end)
     end)
 end
 
--- Opens the folder LrLogger writes into, in Explorer or the Finder. The log
--- no longer sits next to the plug-in, so without this the user has no
--- realistic way to find it.
+-- Opens the folder LrLogger writes into, in Explorer or the Finder. The log no
+-- longer sits next to the plug-in, so without this the user has no realistic way
+-- to find it.
 local function showLogAction()
     local folder = VenzAILog.logFolderPath()
     local file = VenzAILog.logFilePath()
@@ -175,197 +237,94 @@ local function sectionsForTopOfDialog(f, propertyTable)
     -- Reapply defaults every time the panel opens, not just on the module's
     -- first load: if something had left a value empty it self-heals here.
     Settings.applyDefaults()
-    Settings.migrateApiKeyFromPrefs()
+    Settings.purgeLegacyPlainTextKey()
 
-    -- Mirror the persisted settings into the dialog's observable property
-    -- table, and write any change straight back so it is saved immediately.
-    local prefKeys = {
-        "engine", "geminiAnalysisModel", "geminiImageModel",
-        "ollamaBaseUrl", "ollamaModel", "refinementPasses",
-    }
-    for _, key in ipairs(prefKeys) do
-        propertyTable[key] = Settings.get(key)
-        log(string.format("Loaded into panel: %s = '%s' (type=%s)", key, tostring(propertyTable[key]), type(propertyTable[key])))
+    local problems = Registry.problems()
+    if #problems > 0 then
+        log(string.format("%d driver(s) were rejected at load; see the lines above.", #problems))
     end
 
-    -- The API key is not a pref: it comes from and goes back to LrPasswords.
-    propertyTable.geminiApiKey = Settings.getApiKey()
-    log("Loaded into panel: geminiApiKey = " ..
-        ((propertyTable.geminiApiKey ~= "") and "(set, hidden)" or "(empty)"))
-
-    for _, key in ipairs(prefKeys) do
-        propertyTable:addObserver(key, function()
-            local newValue = propertyTable[key]
-            Settings.set(key, newValue)
-            log(string.format("User changed %s -> '%s'", key, tostring(newValue)))
-        end)
-    end
-
-    propertyTable:addObserver("geminiApiKey", function()
-        Settings.setApiKey(propertyTable.geminiApiKey)
-        log("User changed geminiApiKey (value hidden in log, stored via LrPasswords).")
+    propertyTable.activeProvider = Settings.getActiveProviderId()
+    propertyTable:addObserver("activeProvider", function()
+        Settings.setActiveProviderId(propertyTable.activeProvider)
+        log("User changed activeProvider -> '" .. tostring(propertyTable.activeProvider) .. "'")
     end)
 
-    return {
-        {
-            title = LOC "$$$/VenzAI/Settings/SectionTitle=VenzAI Settings",
+    propertyTable.refinementPasses = Settings.get("refinementPasses")
+    propertyTable:addObserver("refinementPasses", function()
+        Settings.set("refinementPasses", propertyTable.refinementPasses)
+        log("User changed refinementPasses -> '" .. tostring(propertyTable.refinementPasses) .. "'")
+    end)
 
-            f:row {
-                bind_to_object = propertyTable,
-                spacing = f:control_spacing(),
-                f:static_text {
-                    title = LOC "$$$/VenzAI/Settings/Engine/Label=AI engine:",
-                    width = share "venzai_label_width",
-                },
-                f:popup_menu {
-                    value = bind "engine",
-                    width_in_chars = 20,
-                    items = {
-                        { title = LOC "$$$/VenzAI/Settings/Engine/Gemini=Gemini (Cloud)", value = "gemini" },
-                        { title = LOC "$$$/VenzAI/Settings/Engine/Local=Local (Ollama)", value = "local" },
-                    },
-                },
+    -- Every declared field of every driver, mirrored in and written straight
+    -- back so a change is saved immediately. A secret is never logged, not even
+    -- as a length.
+    for _, driver in ipairs(Registry.all()) do
+        for _, field in ipairs(driver.settingsFields) do
+            local key = propertyKey(driver.id, field.key)
+            propertyTable[key] = Settings.getProviderField(driver.id, field)
+            propertyTable:addObserver(key, function()
+                Settings.setProviderField(driver.id, field, propertyTable[key])
+                if field.role == "secret" then
+                    log(string.format("User changed %s (value hidden).", key))
+                else
+                    log(string.format("User changed %s -> '%s'", key, tostring(propertyTable[key])))
+                end
+            end)
+        end
+    end
+
+    local section = {
+        title = LOC "$$$/VenzAI/Settings/SectionTitle=VenzAI Settings",
+
+        f:row {
+            bind_to_object = propertyTable,
+            spacing = f:control_spacing(),
+            f:static_text {
+                title = LOC "$$$/VenzAI/Settings/Provider/Label=AI provider:",
+                width = share "venzai_label_width",
             },
-
-            -- "bind_to_object = propertyTable" is explicit here: without it,
-            -- controls nested inside group_box/row did not resolve the
-            -- binding (the fields stayed empty even when the value in
-            -- propertyTable was correct). "enabled" stays on individual
-            -- controls, not on the group_box.
-            f:group_box {
-                bind_to_object = propertyTable,
-                title = LOC "$$$/VenzAI/Settings/Gemini/GroupTitle=Gemini settings",
-                fill_horizontal = 1,
-
-                f:row {
-                    spacing = f:control_spacing(),
-                    f:static_text {
-                        title = LOC "$$$/VenzAI/Settings/Gemini/ApiKeyLabel=API key:",
-                        width = share "venzai_label_width",
-                        enabled = bind { key = "engine", transform = isGeminiTransform },
-                    },
-                    f:password_field {
-                        value = bind "geminiApiKey",
-                        width_in_chars = 30,
-                        enabled = bind { key = "engine", transform = isGeminiTransform },
-                    },
-                },
-                f:row {
-                    f:static_text {
-                        title = LOC "$$$/VenzAI/Settings/Gemini/ApiKeyNote=The key is stored encrypted in the system keychain, not in the preferences file.",
-                        enabled = bind { key = "engine", transform = isGeminiTransform },
-                    },
-                },
-                f:row {
-                    spacing = f:control_spacing(),
-                    f:static_text {
-                        title = LOC "$$$/VenzAI/Settings/Gemini/AnalysisModelLabel=Analysis model:",
-                        width = share "venzai_label_width",
-                        enabled = bind { key = "engine", transform = isGeminiTransform },
-                    },
-                    f:edit_field {
-                        value = bind "geminiAnalysisModel",
-                        width_in_chars = 30,
-                        enabled = bind { key = "engine", transform = isGeminiTransform },
-                    },
-                },
-                f:row {
-                    spacing = f:control_spacing(),
-                    f:static_text {
-                        title = LOC "$$$/VenzAI/Settings/Gemini/ImageModelLabel=Reference image model (Nano Banana):",
-                        width = share "venzai_label_width",
-                        enabled = bind { key = "engine", transform = isGeminiTransform },
-                    },
-                    f:edit_field {
-                        value = bind "geminiImageModel",
-                        width_in_chars = 30,
-                        enabled = bind { key = "engine", transform = isGeminiTransform },
-                    },
-                },
-                f:row {
-                    f:static_text {
-                        title = LOC "$$$/VenzAI/Settings/Gemini/MethodNote=Method used: Nano Banana reference image + multi-pass Gemini refinement.",
-                        enabled = bind { key = "engine", transform = isGeminiTransform },
-                    },
-                },
-            },
-
-            -- Local (Ollama) section (see the note above about bind_to_object and "enabled")
-            f:group_box {
-                bind_to_object = propertyTable,
-                title = LOC "$$$/VenzAI/Settings/Local/GroupTitle=Local (Ollama) settings",
-                fill_horizontal = 1,
-
-                f:row {
-                    spacing = f:control_spacing(),
-                    f:static_text {
-                        title = LOC "$$$/VenzAI/Settings/Local/BaseUrlLabel=Ollama server URL:",
-                        width = share "venzai_label_width",
-                        enabled = bind { key = "engine", transform = isLocalTransform },
-                    },
-                    f:edit_field {
-                        value = bind "ollamaBaseUrl",
-                        width_in_chars = 30,
-                        enabled = bind { key = "engine", transform = isLocalTransform },
-                    },
-                },
-                f:row {
-                    spacing = f:control_spacing(),
-                    f:static_text {
-                        title = LOC "$$$/VenzAI/Settings/Local/ModelLabel=Ollama model:",
-                        width = share "venzai_label_width",
-                        enabled = bind { key = "engine", transform = isLocalTransform },
-                    },
-                    f:edit_field {
-                        value = bind "ollamaModel",
-                        width_in_chars = 30,
-                        enabled = bind { key = "engine", transform = isLocalTransform },
-                    },
-                    f:push_button {
-                        title = LOC "$$$/VenzAI/Settings/Local/DetectButton=Detect models",
-                        enabled = bind { key = "engine", transform = isLocalTransform },
-                        action = function()
-                            detectModelsAction(propertyTable)
-                        end,
-                    },
-                },
-                f:row {
-                    f:static_text {
-                        title = LOC "$$$/VenzAI/Settings/Local/MethodNote=Method used: N local refinement passes (no reference image, fully offline).",
-                        enabled = bind { key = "engine", transform = isLocalTransform },
-                    },
-                },
-            },
-
-            f:row {
-                bind_to_object = propertyTable,
-                spacing = f:control_spacing(),
-                f:static_text {
-                    title = LOC "$$$/VenzAI/Settings/PassesLabel=Refinement passes (1-5):",
-                    width = share "venzai_label_width",
-                },
-                f:edit_field {
-                    value = bind "refinementPasses",
-                    width_in_chars = 4,
-                    precision = 0,
-                    min = Settings.MIN_PASSES,
-                    max = Settings.MAX_PASSES,
-                },
-            },
-
-            f:row {
-                spacing = f:control_spacing(),
-                f:static_text {
-                    title = LOC "$$$/VenzAI/Settings/Log/Label=Diagnostics:",
-                    width = share "venzai_label_width",
-                },
-                f:push_button {
-                    title = LOC "$$$/VenzAI/Settings/Log/ShowButton=Show log file",
-                    action = showLogAction,
-                },
+            f:popup_menu {
+                value = bind "activeProvider",
+                width_in_chars = 26,
+                items = providerItems(),
             },
         },
     }
+
+    for _, driver in ipairs(Registry.all()) do
+        table.insert(section, groupForDriver(f, propertyTable, driver))
+    end
+
+    table.insert(section, f:row {
+        bind_to_object = propertyTable,
+        spacing = f:control_spacing(),
+        f:static_text {
+            title = LOC "$$$/VenzAI/Settings/PassesLabel=Refinement passes (1-5):",
+            width = share "venzai_label_width",
+        },
+        f:edit_field {
+            value = bind "refinementPasses",
+            width_in_chars = 4,
+            precision = 0,
+            min = Settings.MIN_PASSES,
+            max = Settings.MAX_PASSES,
+        },
+    })
+
+    table.insert(section, f:row {
+        spacing = f:control_spacing(),
+        f:static_text {
+            title = LOC "$$$/VenzAI/Settings/Log/Label=Diagnostics:",
+            width = share "venzai_label_width",
+        },
+        f:push_button {
+            title = LOC "$$$/VenzAI/Settings/Log/ShowButton=Show log file",
+            action = showLogAction,
+        },
+    })
+
+    return { section }
 end
 
 return {
