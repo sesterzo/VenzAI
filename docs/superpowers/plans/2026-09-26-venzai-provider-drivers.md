@@ -1737,9 +1737,11 @@ legacy plain-text key is deleted rather than migrated."
 
 ---
 
-### Tasks 6, 7, 8: extracting prompts, parsing and mask application
+### Tasks 6, 7 and 8: the shared shape
 
 These three move existing, working code out of `VenzAIProcess.lua` into modules, with no behaviour change. They are separate tasks because a reviewer could reasonably accept one and reject another, and because each shrinks the file that Task 14 then rewrites.
+
+**Execute Task 7 before Task 6.** `readCurrentSettings`, which Task 6 moves, iterates `VALID_KEYS` and `STRING_VALID_KEYS`, which Task 7 moves. The vocabulary of "which develop parameters do we manage" is one thing and both the prompt and the parser need it, so `VenzAIPrompts` requires `VenzAIParse` and reads it from there rather than keeping a second copy that would drift. Task 7 therefore also exports `Parse.VALID_KEYS` and `Parse.STRING_VALID_KEYS`.
 
 Each follows the same shape, so it is written once here:
 
@@ -1751,7 +1753,11 @@ Each follows the same shape, so it is written once here:
 6. Run the full suite: `python tests/run.py`. Nothing should change.
 7. Commit.
 
-- [ ] **Task 6: `VenzAIPrompts.lua`** — move `VenzAIProcess.lua:214-478`: `PARAM_RULES`, `buildNanoBananaPrompt`, `SETTINGS_NOT_REPORTED`, `readCurrentSettings`, `buildAnalysisPrompt`. Exported: `M.buildReferencePrompt` (renamed from `buildNanoBananaPrompt` — the engine must not name a provider's model, and "Nano Banana" is Gemini's), `M.readCurrentSettings`, `M.buildAnalysisPrompt`. `readCurrentSettings` reads the photo through `photo:getDevelopSettings()`, so its test needs a stub photo:
+### Task 6: VenzAIPrompts
+
+Follows the shared shape above. Execute AFTER Task 7: this module requires `VenzAIParse` for the parameter vocabulary.
+
+- [ ] **Move the code** — move `VenzAIProcess.lua:214-478`: `PARAM_RULES`, `buildNanoBananaPrompt`, `SETTINGS_NOT_REPORTED`, `readCurrentSettings`, `buildAnalysisPrompt`. Exported: `M.buildReferencePrompt` (renamed from `buildNanoBananaPrompt` — the engine must not name a provider's model, and "Nano Banana" is Gemini's), `M.readCurrentSettings`, `M.buildAnalysisPrompt`. `readCurrentSettings` reads the photo through `photo:getDevelopSettings()`, so its test needs a stub photo:
 
 ```lua
 -- tests/test_prompts.lua
@@ -1803,7 +1809,11 @@ return {
 }
 ```
 
-- [ ] **Task 7: `VenzAIParse.lua`** — move `VenzAIProcess.lua:76-212` (the vocabulary: `HSL_COLORS`, `COLOR_GRADE_ZONES`, `VALID_KEYS`, `BOOLEAN_VALID_KEYS`, `STRING_VALID_KEYS`, `RANGES`, `LOCAL_VALID_KEYS`, `LOCAL_RANGES`, `MASK_SUBJECT_TYPES`, `MAX_MASKS_PER_PASS`) and `493-786` (`parseModelSettings`, `findMatchingClose`, `extractMaskBlocks`, `parseMasks`). Exported: `M.parseModelSettings`, `M.parseMasks`, `M.MASK_SUBJECT_TYPES`, `M.MAX_MASKS_PER_PASS`.
+### Task 7: VenzAIParse
+
+Follows the shared shape above. Execute BEFORE Task 6.
+
+- [ ] **Move the code** — move `VenzAIProcess.lua:76-212` (the vocabulary: `HSL_COLORS`, `COLOR_GRADE_ZONES`, `VALID_KEYS`, `BOOLEAN_VALID_KEYS`, `STRING_VALID_KEYS`, `RANGES`, `LOCAL_VALID_KEYS`, `LOCAL_RANGES`, `MASK_SUBJECT_TYPES`, `MAX_MASKS_PER_PASS`) and `493-786` (`parseModelSettings`, `findMatchingClose`, `extractMaskBlocks`, `parseMasks`). Exported: `M.parseModelSettings`, `M.parseMasks`, `M.MASK_SUBJECT_TYPES`, `M.MAX_MASKS_PER_PASS`, and — for Task 6 — `M.VALID_KEYS` and `M.STRING_VALID_KEYS`.
 
   **One behaviour change, and it is the point of the exercise:** delete the first line of `parseModelSettings` and of `parseMasks`, `local unescapedBody = responseBody:gsub('\\"', '"')`, and rename the parameter to `text`. Both now receive `response.text`, already decoded by the driver. Every later reference to `unescapedBody` becomes `text`.
 
@@ -1916,7 +1926,11 @@ return {
 }
 ```
 
-- [ ] **Task 8: `VenzAIMasks.lua`** — move `VenzAIProcess.lua:788-958`: `MASK_DETECT_ATTEMPTS`, `MASK_DETECT_INTERVAL`, `maskingApiAvailable`, `currentMaskIDs`, `waitForNewMaskID`, `maskStillExists`, `applyMasksToPhoto`. Exported: `M.maskingApiAvailable`, `M.applyMasksToPhoto`. This module imports `LrDevelopController`, `LrApplicationView` and `LrTasks`, so its verification is the manual Lightroom run of §12 plus one test that the graceful-degradation branch works:
+### Task 8: VenzAIMasks
+
+Follows the shared shape above.
+
+- [ ] **Move the code** — move `VenzAIProcess.lua:788-958`: `MASK_DETECT_ATTEMPTS`, `MASK_DETECT_INTERVAL`, `maskingApiAvailable`, `currentMaskIDs`, `waitForNewMaskID`, `maskStillExists`, `applyMasksToPhoto`. Exported: `M.maskingApiAvailable`, `M.applyMasksToPhoto`. This module imports `LrDevelopController`, `LrApplicationView` and `LrTasks`, so its verification is the manual Lightroom run of §12 plus one test that the graceful-degradation branch works:
 
 ```lua
 -- tests/test_masks.lua
