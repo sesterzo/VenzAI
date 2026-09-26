@@ -7,11 +7,16 @@ panel (PluginInfoProvider.lua) and the processing run (VenzAIProcess.lua).
 Two things previously lived in each file separately and drifted apart:
 the defaults and the "an empty string is not a value" rule. They are here now.
 
-The Gemini API key is NOT kept in LrPrefs: LrPrefs is a plain-text file on
-disk, so anyone who can read it can read the key. LrPasswords is the storage
-Adobe documents for secrets and is backed by the platform keychain (Keychain
-on macOS, the credential store on Windows) - the same API, the right backing
-store on each platform, no conditional code.
+Settings that belong to no provider - which provider is active, and how many
+refinement passes to run - live in M.DEFAULTS. Everything else is declared by
+a driver in its settingsFields and read through M.providerConfig, so adding a
+provider, or a field to one, is a change in that driver and nowhere else.
+
+A field whose role is "secret" is NOT kept in LrPrefs: LrPrefs is a plain-text
+file on disk, so anyone who can read it can read the secret. LrPasswords is the
+storage Adobe documents for secrets and is backed by the platform keychain
+(Keychain on macOS, the credential store on Windows) - the same API, the right
+backing store on each platform, no conditional code.
 
 ------------------------------------------------------------------------------]]
 
@@ -23,18 +28,10 @@ local log = VenzAILog.scoped("Settings")
 
 local prefs = LrPrefs.prefsForPlugin()
 
--- Key under which the API key is stored in LrPasswords. The salt is left nil
--- so the plug-in ID is used, per the LrPasswords documentation.
-local API_KEY_STORE_KEY = "geminiApiKey"
-
 local M = {}
 
 M.DEFAULTS = {
-    engine = "gemini", -- "gemini" | "local"
-    geminiAnalysisModel = "gemini-2.5-pro",
-    geminiImageModel = "gemini-2.5-flash-image",
-    ollamaBaseUrl = "http://localhost:11434",
-    ollamaModel = "qwen2.5vl:latest",
+    activeProvider = "gemini",
     refinementPasses = 3,
 }
 
@@ -51,55 +48,7 @@ local function valueOr(value, default)
 end
 
 --------------------------------------------------------------------------------
--- API key (LrPasswords)
---------------------------------------------------------------------------------
-
-function M.getApiKey()
-    local ok, key = pcall(function()
-        return LrPasswords.retrieve(API_KEY_STORE_KEY)
-    end)
-    if not ok then
-        log("LrPasswords.retrieve failed: " .. tostring(key))
-        return ""
-    end
-    return key or ""
-end
-
-function M.setApiKey(key)
-    local ok, err = pcall(function()
-        LrPasswords.store(API_KEY_STORE_KEY, key or "")
-    end)
-    if not ok then
-        log("LrPasswords.store failed: " .. tostring(err))
-        return false
-    end
-    return true
-end
-
--- One-time move of a key written by an earlier version, which kept it in
--- prefs.geminiApiKey as plain text. Runs on every load but does nothing once
--- the pref is gone, so there is no "re-enter your key" step for the user.
--- The pref is cleared only after the store succeeded: a failed migration
--- leaves the old value in place rather than losing the key.
-function M.migrateApiKeyFromPrefs()
-    local legacy = prefs.geminiApiKey
-    if legacy == nil or legacy == "" then
-        if legacy == "" then prefs.geminiApiKey = nil end
-        return false
-    end
-
-    if M.setApiKey(legacy) then
-        prefs.geminiApiKey = nil
-        log("Gemini API key migrated from LrPrefs to LrPasswords, plain-text copy removed.")
-        return true
-    end
-
-    log("Could not migrate the API key to LrPasswords, leaving it in LrPrefs for now.")
-    return false
-end
-
---------------------------------------------------------------------------------
--- Everything else (LrPrefs)
+-- Settings that belong to no provider
 --------------------------------------------------------------------------------
 
 -- Writes any default that is missing or empty. Called both at load time and
@@ -132,18 +81,88 @@ function M.getRefinementPasses()
     return passes
 end
 
--- Convenience snapshot for a processing run, so VenzAIProcess reads the
--- configuration once, in one place, instead of a dozen scattered lookups.
-function M.snapshot()
-    return {
-        engine = M.get("engine"),
-        geminiApiKey = M.getApiKey(),
-        geminiAnalysisModel = M.get("geminiAnalysisModel"),
-        geminiImageModel = M.get("geminiImageModel"),
-        ollamaBaseUrl = M.get("ollamaBaseUrl"),
-        ollamaModel = M.get("ollamaModel"),
-        refinementPasses = M.getRefinementPasses(),
-    }
+function M.getActiveProviderId()
+    return valueOr(prefs.activeProvider, M.DEFAULTS.activeProvider)
+end
+
+function M.setActiveProviderId(id)
+    prefs.activeProvider = id
+end
+
+--------------------------------------------------------------------------------
+-- Per-provider settings
+--------------------------------------------------------------------------------
+
+-- Namespaced by driver id, so two providers can both declare a field called
+-- "model" without colliding, and removing a driver leaves an inert island of
+-- preferences rather than a conflict.
+local function prefKey(driverId, fieldKey)
+    return string.format("provider.%s.%s", tostring(driverId), tostring(fieldKey))
+end
+
+-- Reads one declared field. A secret comes from LrPasswords, everything else
+-- from LrPrefs. A secret never falls back to a default - the driver contract
+-- forbids one, since a default secret would mean shipping a credential in the
+-- source - and comes back as "" when unset, so every driver's validate() has a
+-- single shape of absence to check.
+function M.getProviderField(driverId, field)
+    if field.role == "secret" then
+        local ok, value = pcall(function()
+            return LrPasswords.retrieve(prefKey(driverId, field.key))
+        end)
+        if not ok then
+            log("LrPasswords.retrieve failed for " .. prefKey(driverId, field.key) ..
+                ": " .. tostring(value))
+            return ""
+        end
+        return value or ""
+    end
+    return valueOr(prefs[prefKey(driverId, field.key)], field.default or "")
+end
+
+function M.setProviderField(driverId, field, value)
+    if field.role == "secret" then
+        local ok, err = pcall(function()
+            LrPasswords.store(prefKey(driverId, field.key), value or "")
+        end)
+        if not ok then
+            log("LrPasswords.store failed for " .. prefKey(driverId, field.key) ..
+                ": " .. tostring(err))
+            return false
+        end
+        return true
+    end
+    prefs[prefKey(driverId, field.key)] = value
+    return true
+end
+
+-- The `config` of the driver contract: one flat table keyed by each declared
+-- field's own key. Built from the declaration, so adding a field to a driver is
+-- a change in that driver and nowhere else.
+function M.providerConfig(driverId, settingsFields)
+    local config = {}
+    for _, field in ipairs(settingsFields or {}) do
+        config[field.key] = M.getProviderField(driverId, field)
+    end
+    return config
+end
+
+--------------------------------------------------------------------------------
+-- Leftovers from before the driver layer
+--------------------------------------------------------------------------------
+
+-- Deletes the plain-text API key an earlier version kept in prefs.geminiApiKey.
+-- This is NOT a migration - the value is never read anywhere, and the key is
+-- re-entered once, as the design states. It is deleted rather than ignored
+-- because a credential sitting in a plain-text preferences file is the exact
+-- problem LrPasswords was adopted to solve, and ignoring it would leave it
+-- there forever.
+function M.purgeLegacyPlainTextKey()
+    if prefs.geminiApiKey == nil then return false end
+    prefs.geminiApiKey = nil
+    log("Removed the plain-text Gemini API key left in LrPrefs by an earlier version. " ..
+        "Re-enter the key in the plug-in settings.")
+    return true
 end
 
 return M
