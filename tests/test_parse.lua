@@ -2,6 +2,49 @@
 local Parse = require 'VenzAIParse'
 
 return {
+    --------------------------------------------------------------------------
+    -- What Lightroom actually kept
+    --------------------------------------------------------------------------
+    -- The log used to say only "global parameters applied", which means "the
+    -- call returned", not "Lightroom kept these values". A setting Lightroom
+    -- silently overrides - the classic one is Temperature while WhiteBalance
+    -- is still As Shot - looked identical to one that worked, and the only way
+    -- to tell was to stare at the sliders.
+    { "a setting Lightroom kept is not reported", function()
+        local missed = Parse.settingsNotKept({ Exposure2012 = 0.5 }, { Exposure2012 = 0.5 })
+        assert(#missed == 0, "a value that took was reported as missed")
+    end },
+
+    { "a setting Lightroom overrode is reported with both values", function()
+        local missed = Parse.settingsNotKept(
+            { Temperature = 5100 }, { Temperature = 5500 })
+        assert(#missed == 1, "got " .. #missed)
+        assert(missed[1].key == "Temperature", missed[1].key)
+        assert(missed[1].asked == 5100 and missed[1].got == 5500,
+            "both values must be carried, for the log to be worth reading")
+    end },
+
+    { "a setting that vanished entirely is reported too", function()
+        local missed = Parse.settingsNotKept({ HueAdjustmentGreen = 8 }, {})
+        assert(#missed == 1 and missed[1].got == nil, "a dropped key must be named")
+    end },
+
+    { "tiny float differences are not reported", function()
+        -- Crop bounds and SharpenRadius come back rounded; reporting that as a
+        -- failure would bury the real ones in noise.
+        local missed = Parse.settingsNotKept(
+            { CropLeft = 0.10000001, SharpenRadius = 1.2 },
+            { CropLeft = 0.1, SharpenRadius = 1.2000001 })
+        assert(#missed == 0, "rounding was reported as a miss")
+    end },
+
+    { "a non-numeric setting is compared too", function()
+        local missed = Parse.settingsNotKept(
+            { CameraProfile = "Adobe Landscape", ConvertToGrayscale = true },
+            { CameraProfile = "Adobe Color", ConvertToGrayscale = true })
+        assert(#missed == 1 and missed[1].key == "CameraProfile", "got " .. #missed)
+    end },
+
     { "a plain JSON answer yields the settings", function()
         local s = Parse.parseModelSettings('{"Exposure2012": -0.25, "Contrast2012": 15}', false)
         assert(s.Exposure2012 == -0.25 and s.Contrast2012 == 15)

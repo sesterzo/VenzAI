@@ -427,4 +427,40 @@ function M.parseMasks(text)
     return masks
 end
 
+--------------------------------------------------------------------------------
+-- What Lightroom actually kept
+--------------------------------------------------------------------------------
+
+-- Compares what we asked applyDevelopSettings for with what the photo reports
+-- afterwards, and returns the ones that did not stick: { key, asked, got }.
+--
+-- "The call returned" is not "Lightroom kept it". Some settings are computed
+-- from others and quietly overridden - Temperature and Tint are recomputed
+-- from the as-shot values while WhiteBalance says As Shot - and from outside
+-- that is indistinguishable from a model that never proposed them. This turns
+-- the difference into a log line instead of an afternoon at the sliders.
+local FLOAT_TOLERANCE = 1e-4
+
+function M.settingsNotKept(asked, actual)
+    local missed = {}
+    actual = actual or {}
+
+    for key, wanted in pairs(asked or {}) do
+        local got = actual[key]
+        local same
+        if type(wanted) == "number" and type(got) == "number" then
+            local scale = math.max(1, math.abs(wanted))
+            same = math.abs(wanted - got) <= FLOAT_TOLERANCE * scale
+        else
+            same = (wanted == got)
+        end
+        if not same then
+            table.insert(missed, { key = key, asked = wanted, got = got })
+        end
+    end
+
+    table.sort(missed, function(a, b) return a.key < b.key end)
+    return missed
+end
+
 return M

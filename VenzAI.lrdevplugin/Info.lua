@@ -30,7 +30,7 @@ return {
 
     LrPluginName = LOC "$$$/VenzAI/PluginName=VenzAI",
 
-    VERSION = { major = 1, minor = 4, revision = 0, build = 4 },
+    VERSION = { major = 1, minor = 4, revision = 0, build = 6 },
 
     LrPluginInfoProvider = "PluginInfoProvider.lua",
 

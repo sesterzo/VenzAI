@@ -436,6 +436,28 @@ LrTasks.startAsyncTask(function()
         end)
         log(string.format("Pass %d: global parameters applied.", pass))
 
+        -- "Applied" above means the call returned, not that Lightroom kept the
+        -- values. Reading them straight back is the only way to tell a setting
+        -- the model never proposed from one Lightroom silently overrode, and
+        -- the difference is invisible in the photograph unless you know which
+        -- slider to go and look at.
+        local readOk, applied = LrTasks.pcall(function() return photo:getDevelopSettings() end)
+        if not readOk then
+            log(string.format("Pass %d: could not read the settings back to check them: %s",
+                pass, tostring(applied)))
+        else
+            local missed = Parse.settingsNotKept(developSettings, applied)
+            if #missed == 0 then
+                log(string.format("Pass %d: every requested setting was kept.", pass))
+            else
+                log(string.format("Pass %d: %d requested setting(s) did NOT take:", pass, #missed))
+                for _, miss in ipairs(missed) do
+                    log(string.format("    %s: asked %s, photo now reports %s",
+                        miss.key, tostring(miss.asked), tostring(miss.got)))
+                end
+            end
+        end
+
         -- Local (masked) corrections use a completely different write path
         -- (LrDevelopController, which requires the Develop module to be
         -- active) than the global settings above, so they must happen
