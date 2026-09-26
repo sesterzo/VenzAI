@@ -120,12 +120,18 @@ function M.analyze(request, config)
     -- Several text parts are possible; the model's answer is their
     -- concatenation, already decoded by Json.
     local texts = Json.stringValues(body, "text")
-    if #texts == 0 then
+    -- The key can be present and empty - a safety block arrives that way - so
+    -- the concatenation is what decides, not the number of parts. Returning a
+    -- Response with an empty text would fail the contract's shape check and
+    -- reach the user as driver_fault ("a fault in the plug-in rather than in your
+    -- settings") when the truth is "a filter blocked it, try another model".
+    local answer = table.concat(texts)
+    if answer == "" then
         return Contract.failure("empty", body:sub(1, 600), nil, status)
     end
 
     return Contract.success({
-        text = table.concat(texts),
+        text = answer,
         truncated = (Json.stringValue(body, "finishReason") == "MAX_TOKENS"),
         httpStatus = status,
     })

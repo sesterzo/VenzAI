@@ -360,7 +360,14 @@ LrTasks.startAsyncTask(function()
             break
         end
 
-        log(string.format("Pass %d: answer received (%d characters).", pass, #response.text))
+        -- The answer itself, not just its length. The pre-driver engine logged
+        -- the whole raw HTTP body every pass, and that was the working tool for
+        -- prompt iteration: on an answer that succeeds but is WRONG there is
+        -- otherwise no record of what the model actually said, and errorDetail
+        -- only exists on failure. Truncated because a body can be long, and kept
+        -- because losing it costs more than the log lines.
+        log(string.format("Pass %d: answer received (%d characters): %s",
+            pass, #response.text, response.text:sub(1, 4000)))
 
         -- A truncated answer looks exactly like the model choosing not to
         -- include something, so say so loudly rather than letting it be misread

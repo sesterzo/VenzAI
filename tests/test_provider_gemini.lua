@@ -175,4 +175,27 @@ return {
         local names, errorKind = G.listModels(CONFIG)
         assert(names == nil and errorKind == "auth", "got " .. tostring(errorKind))
     end },
+
+    { "200 with an EMPTY text yields empty, not driver_fault", function()
+        -- A safety block can come back as a present but empty text. Reporting
+        -- driver_fault here tells the user "this is a fault in the plug-in rather
+        -- than in your settings", when the truth is "a filter blocked it, try
+        -- another model".
+        harness.reset()
+        local G = require 'VenzAIProviderGemini'
+        harness.queueResponse(
+            '{"candidates":[{"content":{"parts":[{"text":""}]},"finishReason":"SAFETY"}]}', OK)
+        local response = Contract.call(G, "analyze", { parts = {} }, CONFIG)
+        assert(response.errorKind == "empty", "got " .. tostring(response.errorKind))
+    end },
+
+    { "an answer split across parts where only one is empty still succeeds", function()
+        harness.reset()
+        local G = require 'VenzAIProviderGemini'
+        harness.queueResponse(
+            '{"candidates":[{"content":{"parts":[{"text":""},{"text":"{\\"Exposure2012\\": 0.5}"}]},"finishReason":"STOP"}]}', OK)
+        local response = Contract.call(G, "analyze", { parts = {} }, CONFIG)
+        assert(response.ok, "expected success, got " .. tostring(response.errorKind))
+        assert(response.text == '{"Exposure2012": 0.5}', "got " .. tostring(response.text))
+    end },
 }

@@ -39,22 +39,36 @@ for _, name in ipairs(FILES) do
 end
 
 -- Guards against a file being added to the bundle and never listed above, which
--- would leave it unchecked.
-table.insert(cases, { "every listed file exists and nothing in the bundle is unlisted", function()
-    local listed = {}
-    for _, name in ipairs(FILES) do listed[name] = true end
+-- would leave it unchecked. The list of what is actually in the bundle is
+-- injected by tests/run.py: the first version of this shelled out to `ls`, which
+-- does not exist in cmd.exe, so it silently found zero files and the assertion
+-- could never fail - a guard that guarded nothing.
+table.insert(cases, { "the bundle contains exactly the files listed here", function()
+    assert(VENZAI_BUNDLE_FILES and VENZAI_BUNDLE_FILES ~= "",
+        "tests/run.py did not inject the bundle file list")
 
-    -- io.popen is unavailable in Lightroom but fine here: this is a test, and it
-    -- runs on a desktop interpreter.
-    local pipe = io.popen('ls "' .. BUNDLE .. '"/*.lua 2>/dev/null')
-    assert(pipe, "could not list the bundle")
-    local unlisted = {}
-    for line in pipe:lines() do
-        local base = line:match("([^/\\]+)%.lua%s*$")
-        if base and not listed[base] then table.insert(unlisted, base) end
+    local found, count = {}, 0
+    for name in tostring(VENZAI_BUNDLE_FILES):gmatch("[^,]+") do
+        found[name] = true
+        count = count + 1
     end
-    pipe:close()
-    assert(#unlisted == 0, "not listed in this test: " .. table.concat(unlisted, ", "))
+    assert(count >= #FILES,
+        string.format("the bundle has %d .lua files but this test lists %d", count, #FILES))
+
+    local listed = {}
+    local missing = {}
+    for _, name in ipairs(FILES) do
+        listed[name] = true
+        if not found[name] then table.insert(missing, name) end
+    end
+    assert(#missing == 0, "listed here but not in the bundle: " .. table.concat(missing, ", "))
+
+    local unlisted = {}
+    for name in pairs(found) do
+        if not listed[name] then table.insert(unlisted, name) end
+    end
+    table.sort(unlisted)
+    assert(#unlisted == 0, "in the bundle but not listed in this test: " .. table.concat(unlisted, ", "))
 end })
 
 return cases

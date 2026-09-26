@@ -26,6 +26,12 @@ def run_suite(path):
     """Runs one suite file in its own runtime. Returns (passed, failed)."""
     runtime = lua51.LuaRuntime(unpack_returned_tuples=True)
     runtime.globals()["VENZAI_BUNDLE"] = BUNDLE.as_posix()
+    # What is actually in the bundle, so a suite can check the two against each
+    # other. Enumerated here rather than shelled out to from Lua: `ls` does not
+    # exist in cmd.exe, and a guard that silently finds nothing guards nothing.
+    runtime.globals()["VENZAI_BUNDLE_FILES"] = ",".join(
+        sorted(p.stem for p in BUNDLE.glob("*.lua"))
+    )
     runtime.execute(HARNESS.read_text(encoding="utf-8"))
 
     # A suite file can raise while it is still loading - a top-level require of

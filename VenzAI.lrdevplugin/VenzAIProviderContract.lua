@@ -264,4 +264,61 @@ function M.call(driver, method, request, config)
     return result
 end
 
+-- The same funnel for listModels, which does not return a Response: it answers
+-- a list of names, so it needs its own wrapper rather than being forced into a
+-- shape it does not have.
+--
+-- It exists because the settings panel's Detect button used to call
+-- driver.listModels directly, and so was the one place that skipped both
+-- guarantees: an empty API key produced a round trip that came back `auth`
+-- ("the key may have been revoked") instead of `config_invalid` ("the API key is
+-- empty"), and a driver that raised on a nil field reached Lightroom as a raw
+-- Lua error dialog.
+--
+-- Returns names, errorKind, errorDetail, reasonKey. An EMPTY list is success:
+-- reachable with nothing installed is not a failure, and the caller says so
+-- differently.
+function M.listModels(driver, config)
+    local driverId = (type(driver) == "table" and tostring(driver.id)) or "<not a driver>"
+
+    if type(driver) ~= "table"
+        or type(driver.capabilities) ~= "table"
+        or not driver.capabilities.listModels then
+        return nil, "not_supported",
+            string.format("driver '%s' does not declare 'listModels'", driverId)
+    end
+
+    if type(driver.validate) ~= "function" then
+        return nil, "driver_fault", string.format("driver '%s' has no validate function", driverId)
+    end
+
+    local validateOk, valid, reasonKey = pcall(driver.validate, config)
+    if not validateOk then
+        log(string.format("%s.validate raised during listModels: %s", driverId, tostring(valid)))
+        return nil, "driver_fault", tostring(valid)
+    end
+    if not valid then
+        log(string.format("%s: configuration rejected before listing models (%s).",
+            driverId, tostring(reasonKey)))
+        return nil, "config_invalid", nil, reasonKey or "config_unspecified"
+    end
+
+    local callOk, names, errorKind, errorDetail = pcall(driver.listModels, config)
+    if not callOk then
+        log(string.format("%s.listModels raised: %s", driverId, tostring(names)))
+        return nil, "driver_fault", tostring(names)
+    end
+
+    if names == nil then
+        return nil, errorKind or "unknown", errorDetail
+    end
+    if type(names) ~= "table" then
+        log(string.format("%s.listModels returned a %s, expected a table.", driverId, type(names)))
+        return nil, "driver_fault",
+            string.format("listModels returned a %s, expected a table", type(names))
+    end
+
+    return names
+end
+
 return M

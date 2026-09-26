@@ -246,4 +246,72 @@ return {
             assert(Contract.ERROR_KINDS[kind], "missing kind " .. kind)
         end
     end },
+
+    --------------------------------------------------------------------------
+    -- The listModels funnel
+    --------------------------------------------------------------------------
+    { "listModels through the funnel rejects a bad config before calling out", function()
+        -- The panel's Detect button used to call driver.listModels directly, so
+        -- an empty API key produced a round trip that came back auth - "the key
+        -- may have been revoked" - instead of "the API key is empty".
+        local reached = false
+        local driver = goodDriver({
+            capabilities = { analyze = true, listModels = true },
+            listModels = function() reached = true; return { "m-1" } end,
+        })
+        local names, errorKind, detail, reasonKey =
+            Contract.listModels(driver, { apiKey = "", model = "fake-1" })
+        assert(names == nil, "no list should come back")
+        assert(errorKind == "config_invalid", "got " .. tostring(errorKind))
+        assert(reasonKey == "missing_api_key", "got " .. tostring(reasonKey))
+        assert(not reached, "listModels must not run on an invalid config")
+    end },
+
+    { "listModels through the funnel passes a good call through", function()
+        local driver = goodDriver({
+            capabilities = { analyze = true, listModels = true },
+            listModels = function(config) return { "m-1", "m-2" } end,
+        })
+        local names, errorKind = Contract.listModels(driver, VALID_CONFIG)
+        assert(errorKind == nil, "got " .. tostring(errorKind))
+        assert(#names == 2 and names[1] == "m-1")
+    end },
+
+    { "listModels through the funnel preserves an empty list as success", function()
+        -- Reachable but nothing installed is not a failure.
+        local driver = goodDriver({
+            capabilities = { analyze = true, listModels = true },
+            listModels = function() return {} end,
+        })
+        local names, errorKind = Contract.listModels(driver, VALID_CONFIG)
+        assert(errorKind == nil, "an empty list is not an error")
+        assert(type(names) == "table" and #names == 0)
+    end },
+
+    { "listModels through the funnel turns a raise into driver_fault", function()
+        -- A field arriving nil rather than "" made a driver concatenate nil and
+        -- raise, which reached Lightroom as a raw Lua error dialog.
+        local driver = goodDriver({
+            capabilities = { analyze = true, listModels = true },
+            listModels = function() error("attempt to concatenate a nil value", 0) end,
+        })
+        local names, errorKind, detail = Contract.listModels(driver, VALID_CONFIG)
+        assert(names == nil)
+        assert(errorKind == "driver_fault", "got " .. tostring(errorKind))
+        assert(tostring(detail):find("concatenate", 1, true), "the raise must reach the detail")
+    end },
+
+    { "listModels on a driver that does not declare it is not_supported", function()
+        local names, errorKind = Contract.listModels(goodDriver(), VALID_CONFIG)
+        assert(names == nil and errorKind == "not_supported", "got " .. tostring(errorKind))
+    end },
+
+    { "listModels returning something that is not a table is driver_fault", function()
+        local driver = goodDriver({
+            capabilities = { analyze = true, listModels = true },
+            listModels = function() return "oops" end,
+        })
+        local names, errorKind = Contract.listModels(driver, VALID_CONFIG)
+        assert(names == nil and errorKind == "driver_fault", "got " .. tostring(errorKind))
+    end },
 }

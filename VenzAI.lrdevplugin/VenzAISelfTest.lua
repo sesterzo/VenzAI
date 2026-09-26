@@ -39,7 +39,7 @@ LrTasks.startAsyncTask(function()
         elseif not valid then
             report("  models: not attempted, the settings are incomplete")
         else
-            local names, errorKind, errorDetail = driver.listModels(config)
+            local names, errorKind, errorDetail = Contract.listModels(driver, config)
             if not names then
                 report("  models: " .. tostring(errorKind) .. " - " .. tostring(errorDetail))
             elseif #names == 0 then

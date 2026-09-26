@@ -27,6 +27,7 @@ local LrFileUtils = import 'LrFileUtils'
 local VenzAILog = require 'VenzAILog'
 local Settings = require 'VenzAISettings'
 local Registry = require 'VenzAIProviderRegistry'
+local Contract = require 'VenzAIProviderContract'
 local Messages = require 'VenzAIMessages'
 
 local log = VenzAILog.scoped("Settings")
@@ -148,13 +149,18 @@ function detectModelsAction(propertyTable, driver, field)
                 config[declared.key] = propertyTable[propertyKey(driver.id, declared.key)]
             end
 
-            local names, errorKind, errorDetail = driver.listModels(config)
+            -- Through the funnel, not straight at the driver: this is the one
+            -- place that used to skip validation, so an empty API key produced a
+            -- round trip that came back "the credentials were rejected" instead
+            -- of "the API key is empty". The funnel also pcalls the driver, so a
+            -- field arriving nil cannot surface as a raw Lua error dialog.
+            local names, errorKind, errorDetail, reasonKey = Contract.listModels(driver, config)
 
             if not names then
                 log(string.format("Detect models failed for %s: %s (%s)",
                     driver.id, tostring(errorKind), tostring(errorDetail)))
                 local title, body = Messages.forError(errorKind or "unknown",
-                    driver.displayName, config[field.key])
+                    driver.displayName, config[field.key], reasonKey)
                 LrDialogs.message(title, body .. Messages.technicalSection(errorDetail), "warning")
                 return
             end
@@ -244,7 +250,18 @@ local function sectionsForTopOfDialog(f, propertyTable)
         log(string.format("%d driver(s) were rejected at load; see the lines above.", #problems))
     end
 
-    propertyTable.activeProvider = Settings.getActiveProviderId()
+    -- Seeded from Registry.active(), not from the raw pref: when the pref names
+    -- a driver that no longer exists the engine falls back to the first
+    -- registered one, and the panel has to show THAT, or the popup renders empty
+    -- with every group box disabled while a different provider is what actually
+    -- runs. The observer below then writes the healed value back.
+    local activeDriver = Registry.active()
+    propertyTable.activeProvider = activeDriver and activeDriver.id or Settings.getActiveProviderId()
+    if activeDriver and activeDriver.id ~= Settings.getActiveProviderId() then
+        log(string.format("activeProvider pref was '%s', which is not registered; the panel shows '%s'.",
+            tostring(Settings.getActiveProviderId()), activeDriver.id))
+        Settings.setActiveProviderId(activeDriver.id)
+    end
     propertyTable:addObserver("activeProvider", function()
         Settings.setActiveProviderId(propertyTable.activeProvider)
         log("User changed activeProvider -> '" .. tostring(propertyTable.activeProvider) .. "'")
