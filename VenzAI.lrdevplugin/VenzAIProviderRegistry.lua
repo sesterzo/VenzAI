@@ -50,21 +50,25 @@ function M.all() return drivers end
 function M.byId(id) return byId[id] end
 function M.problems() return problems end
 
--- Falls back to the first registered driver when the pref names one that is no
--- longer here, which is what a removed or renamed driver leaves behind. The
--- plug-in keeps working with a provider the user can see and change, rather
--- than failing at load over a stale string.
+-- The first line of the list above is the default provider: this is the only
+-- file that names one, so a different default is a reordering here.
+--
+-- Two different situations both land on that first driver. Nothing chosen yet
+-- (a fresh install) is ordinary and silent. A pref naming a driver that is no
+-- longer here - what a removed or renamed driver leaves behind - is worth a
+-- line in the log, and the plug-in keeps working with a provider the user can
+-- see and change rather than failing at load over a stale string.
 function M.active()
     local id = Settings.getActiveProviderId()
-    local driver = byId[id]
+    local driver = id and byId[id]
     if driver then return driver end
 
     local fallback = drivers[1]
-    if fallback then
-        log(string.format("activeProvider is '%s', which is not registered; falling back to '%s'.",
-            tostring(id), fallback.id))
-    else
+    if not fallback then
         log("No driver is registered at all.")
+    elseif id then
+        log(string.format("activeProvider is '%s', which is not registered; falling back to '%s'.",
+            id, fallback.id))
     end
     return fallback
 end

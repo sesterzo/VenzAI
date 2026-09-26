@@ -8,8 +8,10 @@ return {
         harness.reset()
         local S = require 'VenzAISettings'
         S.applyDefaults()
-        assert(harness.prefs.activeProvider == "gemini", "activeProvider default missing")
         assert(harness.prefs.refinementPasses == 3, "passes default missing")
+        assert(harness.prefs.activeProvider == nil,
+            "which provider is default belongs to the registry's first line, "
+            .. "and naming one here would put a provider's name in this file")
         assert(harness.prefs.engine == nil,
             "engine is a driver's concern now and must not be written here")
     end },
@@ -22,7 +24,7 @@ return {
         harness.reset()
         local S = require 'VenzAISettings'
         harness.prefs.activeProvider = ""
-        assert(S.getActiveProviderId() == "gemini",
+        assert(S.getActiveProviderId() == nil,
             "empty string must not be treated as a value")
     end },
 
@@ -35,11 +37,14 @@ return {
         assert(S.getRefinementPasses() == S.MIN_PASSES, "not clamped downwards")
     end },
 
-    { "the active provider defaults to gemini", function()
+    { "an unset active provider is nil, not a provider's name", function()
+        -- The registry decides which driver runs when nothing is chosen; this
+        -- module must not name one. Pinned here because a default id put back
+        -- in DEFAULTS would silently re-couple every provider to one of them.
         harness.reset()
         local S = require 'VenzAISettings'
         S.applyDefaults()
-        assert(S.getActiveProviderId() == "gemini", "got " .. tostring(S.getActiveProviderId()))
+        assert(S.getActiveProviderId() == nil, "got " .. tostring(S.getActiveProviderId()))
     end },
 
     { "a legacy plain-text API key is deleted, not migrated", function()

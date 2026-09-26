@@ -31,7 +31,6 @@ local prefs = LrPrefs.prefsForPlugin()
 local M = {}
 
 M.DEFAULTS = {
-    activeProvider = "gemini",
     refinementPasses = 3,
 }
 
@@ -81,8 +80,12 @@ function M.getRefinementPasses()
     return passes
 end
 
+-- Returns nil when nothing has been chosen yet. There is deliberately no
+-- default provider id here: naming one would put a provider's name in a file
+-- shared by every provider. The registry answers "which driver, then?" from
+-- its own first line, which is the list a person edits.
 function M.getActiveProviderId()
-    return valueOr(prefs.activeProvider, M.DEFAULTS.activeProvider)
+    return valueOr(prefs.activeProvider, nil)
 end
 
 function M.setActiveProviderId(id)

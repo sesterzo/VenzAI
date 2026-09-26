@@ -28,6 +28,16 @@ return {
     end },
 
     -- Review Focus: a pref naming a driver that no longer exists.
+    { "with nothing chosen yet, the first registered driver is the default", function()
+        harness.reset()
+        local Registry = require 'VenzAIProviderRegistry'
+        harness.prefs.activeProvider = nil
+        local first = Registry.all()[1]
+        assert(Registry.active() == first,
+            "a fresh install must land on the registry's first line, got "
+            .. tostring(Registry.active() and Registry.active().id))
+    end },
+
     { "an activeProvider naming an unknown driver falls back to the first", function()
         harness.reset()
         local R = require 'VenzAIProviderRegistry'
