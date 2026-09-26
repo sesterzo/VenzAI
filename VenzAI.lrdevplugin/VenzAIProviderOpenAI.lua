@@ -112,21 +112,52 @@ local function contentJson(parts)
     return table.concat(out, ",")
 end
 
+-- Some models fix their own sampling and reject the parameter outright:
+--
+--   "Unsupported value: 'temperature' does not support 0.2 with this model.
+--    Only the default (1) value is supported."
+--
+-- That is a 400, so the whole pass died telling the user the plug-in had built
+-- a malformed request. It had not: the request is fine, the parameter is just
+-- not ours to set on that model. Detected on the service's own words rather
+-- than on a list of model names, which would be out of date by the time it
+-- shipped.
+local function refusesTemperature(body)
+    if not body then return false end
+    return body:find("unsupported_value", 1, true) ~= nil
+        and body:find("temperature", 1, true) ~= nil
+end
+
 function M.analyze(request, config)
     local responseFormat = request.wantsJson
         and ', "response_format": { "type": "json_object" }' or ''
-    local payload = string.format(
-        '{ "model": %s, "messages": [{ "role": "user", "content": [%s] }], "temperature": '
-        .. ANALYSIS_TEMPERATURE .. '%s }',
-        Json.escape(config.model), contentJson(request.parts), responseFormat)
+
+    local function buildPayload(withTemperature)
+        local temperature = withTemperature
+            and (', "temperature": ' .. ANALYSIS_TEMPERATURE) or ''
+        return string.format(
+            '{ "model": %s, "messages": [{ "role": "user", "content": [%s] }]%s%s }',
+            Json.escape(config.model), contentJson(request.parts), temperature, responseFormat)
+    end
 
     local url = endpoint(config.baseUrl, "/chat/completions")
-    log("POST " .. url)
-    local body, headers = LrHttp.post(url, payload, {
-        { field = "Content-Type", value = "application/json" },
-        { field = "Authorization", value = "Bearer " .. config.apiKey },
-    }, "POST", request.timeout or M.defaultTimeout)
+
+    local function send(payload)
+        log("POST " .. url)
+        return LrHttp.post(url, payload, {
+            { field = "Content-Type", value = "application/json" },
+            { field = "Authorization", value = "Bearer " .. config.apiKey },
+        }, "POST", request.timeout or M.defaultTimeout)
+    end
+
+    local body, headers = send(buildPayload(true))
     local status = headers and headers.status
+
+    if body and status == 400 and refusesTemperature(body) then
+        log("This model sets its own temperature; retrying once without it.")
+        body, headers = send(buildPayload(false))
+        status = headers and headers.status
+    end
 
     if not body then
         return Contract.failure("unreachable",
@@ -150,6 +181,29 @@ function M.analyze(request, config)
     })
 end
 
+-- /v1/models returns everything the account can reach: embeddings, speech,
+-- transcription, image generation, moderation, realtime sessions, and the old
+-- completion models. Hundreds of entries, of which a handful can look at a
+-- photograph and answer with JSON, and the settings panel offered all of them.
+--
+-- Filtered by EXCLUSION, never by a list of approved names. A whitelist would
+-- be out of date the day OpenAI ships its next model, and the user would have
+-- no way to reach it; an exclusion list only goes stale by showing one entry
+-- too many, which costs a moment rather than a capability.
+local CANNOT_READ_A_PHOTOGRAPH = {
+    "embedding", "whisper", "tts", "audio", "realtime", "transcribe", "speech",
+    "dall%-e", "image", "sora", "moderation", "search", "davinci", "babbage",
+    "computer%-use",
+}
+
+local function cannotReadAPhotograph(id)
+    local name = id:lower()
+    for _, pattern in ipairs(CANNOT_READ_A_PHOTOGRAPH) do
+        if name:find(pattern) then return true end
+    end
+    return false
+end
+
 function M.listModels(config)
     local body, headers = LrHttp.get(endpoint(config.baseUrl, "/models"),
         { { field = "Authorization", value = "Bearer " .. config.apiKey } }, LIST_TIMEOUT)
@@ -161,7 +215,17 @@ function M.listModels(config)
     if status ~= 200 then
         return nil, classifyStatus(status), body:sub(1, 600)
     end
-    return Json.stringValues(body, "id")
+    local everything = Json.stringValues(body, "id")
+    local usable = {}
+    for _, id in ipairs(everything) do
+        if not cannotReadAPhotograph(id) then
+            table.insert(usable, id)
+        end
+    end
+
+    log(string.format("%d model(s) offered, %d can plausibly do this job.",
+        #everything, #usable))
+    return usable
 end
 
 return M
