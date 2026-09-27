@@ -2,7 +2,6 @@
 
 **A vision model reads your photograph. Lightroom gets the sliders.**
 
-[![tests](https://github.com/sesterzo/VenzAI/actions/workflows/tests.yml/badge.svg)](https://github.com/sesterzo/VenzAI/actions/workflows/tests.yml)
 ![Lightroom Classic 11+](https://img.shields.io/badge/Lightroom%20Classic-11%2B-31a8ff)
 ![Windows and macOS](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey)
 ![Lua 5.1](https://img.shields.io/badge/Lua-5.1-000080)
