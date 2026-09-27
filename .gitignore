@@ -29,3 +29,6 @@ desktop.ini
 # for, and they go stale the moment the code moves past them.
 docs/
 tests/__pycache__/
+
+# Local measuring tools: useful here, not part of the plug-in.
+tools/
