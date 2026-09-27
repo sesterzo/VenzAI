@@ -178,7 +178,7 @@ VenzAI writes a detailed log of every run. The file is `VenzAI.log`:
 The first line of every run is the build number:
 
 ```
-VenzAI 1.4.0 build 60
+VenzAI 1.0.0 build 60
 === VenzAI start (provider=gemini, model=..., passes=3) ===
 ```
 
