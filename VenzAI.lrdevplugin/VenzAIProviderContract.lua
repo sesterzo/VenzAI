@@ -78,6 +78,10 @@ M.FIELD_ROLES = {
     model  = true,
     url    = true,
     text   = true,
+    -- A yes/no the user can set, rendered as a checkbox. Its value is a
+    -- boolean rather than a string, and it may name a capability it switches -
+    -- see `enables` in validateDriver and M.capabilityEnabled below.
+    toggle = true,
 }
 
 --------------------------------------------------------------------------------
@@ -251,13 +255,77 @@ function M.validateDriver(driver)
             return false, string.format("driver '%s': field '%s' has no 'label'",
                 driver.id, field.key)
         end
-        if field.default ~= nil and type(field.default) ~= "string" then
+        if field.role == "toggle" then
+            if type(field.default) ~= "boolean" then
+                return false, string.format(
+                    "driver '%s': toggle '%s' needs a boolean default - it is a yes/no, " ..
+                    "and a string here would come back from the preferences as the " ..
+                    "string \"false\", which is true in Lua",
+                    driver.id, field.key)
+            end
+        elseif field.default ~= nil and type(field.default) ~= "string" then
             return false, string.format("driver '%s': field '%s' has a non-string default",
                 driver.id, field.key)
+        end
+
+        -- A toggle may switch one of the driver's capabilities. Checked here
+        -- rather than trusted, because a switch wired to a capability the
+        -- driver does not declare, or to a name outside the closed set, is a
+        -- control that silently does nothing - which is exactly the class of
+        -- defect this contract exists to catch at load.
+        if field.enables ~= nil then
+            if field.role ~= "toggle" then
+                return false, string.format(
+                    "driver '%s': field '%s' declares 'enables' but is not a toggle",
+                    driver.id, field.key)
+            end
+            if not M.CAPABILITIES[field.enables] then
+                return false, string.format(
+                    "driver '%s': toggle '%s' switches '%s', which is not a capability",
+                    driver.id, field.key, tostring(field.enables))
+            end
+            if not driver.capabilities[field.enables] then
+                return false, string.format(
+                    "driver '%s': toggle '%s' switches '%s', which this driver does not declare",
+                    driver.id, field.key, field.enables)
+            end
         end
         if field.role == "secret" and field.default ~= nil then
             return false, string.format("driver '%s': secret field '%s' must not have a default",
                 driver.id, field.key)
+        end
+    end
+
+    return true
+end
+
+--------------------------------------------------------------------------------
+-- Is a capability available right now?
+--------------------------------------------------------------------------------
+
+-- A declared capability used to BE the switch, so the only way to stop a
+-- driver generating a reference image was to delete the declaration from its
+-- source. A driver may now also declare a toggle that switches one of its
+-- capabilities, and this is the single question the engine asks: not "does
+-- this driver declare it" but "is it on".
+--
+-- A driver with no toggle behaves exactly as before - declared means on - so
+-- adding this changes nothing for a driver that does not opt in.
+function M.capabilityEnabled(driver, capability, config)
+    if type(driver) ~= "table" or type(driver.capabilities) ~= "table" then
+        return false
+    end
+    if not driver.capabilities[capability] then
+        return false
+    end
+
+    for _, field in ipairs(driver.settingsFields or {}) do
+        if field.enables == capability then
+            local value = (config or {})[field.key]
+            if value == nil then
+                value = field.default
+            end
+            return value == true
         end
     end
 
@@ -329,7 +397,13 @@ end
 -- Returns names, errorKind, errorDetail, reasonKey. An EMPTY list is success:
 -- reachable with nothing installed is not a failure, and the caller says so
 -- differently.
-function M.listModels(driver, config)
+-- `field`, when given, is the settings field the list is being offered for.
+-- A driver with more than one model field needs it: the models that can read a
+-- photograph and the models that can draw one are disjoint sets, and offering
+-- either list in the wrong place is the same as offering nothing. Optional, so
+-- a caller with no field in mind - the self-test, which only wants to know
+-- whether the service answers - keeps working unchanged.
+function M.listModels(driver, config, field)
     local driverId = (type(driver) == "table" and tostring(driver.id)) or "<not a driver>"
 
     if type(driver) ~= "table"
@@ -354,7 +428,7 @@ function M.listModels(driver, config)
         return nil, "config_invalid", nil, reasonKey or "config_unspecified"
     end
 
-    local callOk, names, errorKind, errorDetail = protectedCall(driver.listModels, config)
+    local callOk, names, errorKind, errorDetail = protectedCall(driver.listModels, config, field)
     if not callOk then
         log(string.format("%s.listModels raised: %s", driverId, tostring(names)))
         return nil, "driver_fault", tostring(names)

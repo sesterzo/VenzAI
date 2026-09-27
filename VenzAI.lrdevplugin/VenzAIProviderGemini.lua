@@ -43,6 +43,13 @@ local M = {
           label = "$$$/VenzAI/Provider/Gemini/Model=Analysis model" },
         { key = "imageModel", role = "model", default = "gemini-2.5-flash-image",
           label = "$$$/VenzAI/Provider/Gemini/ImageModel=Reference image model" },
+        -- On by default: this is what the plug-in has always done, and turning
+        -- it off changes the shape of every run. Off is a deliberate choice -
+        -- and a useful measurement, since it is the only way to see what the
+        -- reference image is actually worth on a given photograph.
+        { key = "useReference", role = "toggle", default = true,
+          enables = "generateReference",
+          label = "$$$/VenzAI/Provider/Gemini/UseReference=Generate a reference image first" },
     },
 }
 

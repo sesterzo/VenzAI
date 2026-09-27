@@ -2,6 +2,53 @@
 -- Task 5 changes the shape of the configuration without changing these rules.
 
 return {
+    { "showing the reference image is off unless asked for", function()
+        -- A debugging aid: it stops the run with a dialog, so it must never be
+        -- on by default. `false` is a value, not an absence - the same trap the
+        -- toggle fields have, one level up.
+        harness.reset()
+        local S = require 'VenzAISettings'
+        S.applyDefaults()
+        assert(S.get("showReference") == false, "got " .. tostring(S.get("showReference")))
+        harness.prefs.showReference = true
+        assert(S.get("showReference") == true, "the setting cannot be turned on")
+        harness.prefs.showReference = false
+        assert(S.get("showReference") == false, "turning it back off did not stick")
+    end },
+
+    --------------------------------------------------------------------------
+    -- Toggles are booleans, not strings
+    --------------------------------------------------------------------------
+    { "a toggle comes back as a boolean, not the string it was stored as", function()
+        harness.reset()
+        local S = require 'VenzAISettings'
+        local field = { key = "useReference", role = "toggle", default = true }
+        S.setProviderField("gemini", field, false)
+        local back = S.getProviderField("gemini", field)
+        assert(back == false, "got " .. type(back) .. " " .. tostring(back))
+    end },
+
+    { "a toggle never set takes its declared default", function()
+        harness.reset()
+        local S = require 'VenzAISettings'
+        assert(S.getProviderField("gemini",
+            { key = "useReference", role = "toggle", default = true }) == true)
+        assert(S.getProviderField("gemini",
+            { key = "useImages", role = "toggle", default = false }) == false)
+    end },
+
+    { "a toggle switched off survives the round trip", function()
+        -- The bug this guards: `value or default` treats false as absent, so a
+        -- switch the user turned off comes back on at the next read.
+        harness.reset()
+        local S = require 'VenzAISettings'
+        local field = { key = "useReference", role = "toggle", default = true }
+        S.setProviderField("gemini", field, false)
+        assert(S.getProviderField("gemini", field) == false, "the switch turned itself back on")
+        local config = S.providerConfig("gemini", { field })
+        assert(config.useReference == false, "and it came back on through providerConfig")
+    end },
+
     { "applyDefaults writes every default", function()
         -- After the provider rework DEFAULTS holds only the settings that
         -- belong to no provider; everything else is declared by a driver.

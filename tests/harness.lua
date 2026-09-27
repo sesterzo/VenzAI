@@ -58,9 +58,26 @@ local function defaultStubs()
                 info = function(_, message) table.insert(H.logLines, tostring(message)) end,
             }
         end,
+        LrFileUtils = {
+            -- postMultipart reads fileSize off a file part and does arithmetic
+            -- on it, so a part without one raises inside the SDK. The stub
+            -- answers like the real one: a table of attributes, or nothing at
+            -- all for a path that is not there.
+            fileAttributes = function(path)
+                if H.files and H.files[path] == nil then return nil end
+                return { fileSize = (H.files and H.files[path]) or 12345 }
+            end,
+            exists = function(path)
+                if H.files and H.files[path] == nil then return false end
+                return "file"
+            end,
+        },
         LrPathUtils = {
             child = function(a, b) return tostring(a) .. "/" .. tostring(b) end,
             getStandardFilePath = function(which) return "/tmp/" .. tostring(which) end,
+            leafName = function(path)
+                return tostring(path):match("[^/\]+$") or tostring(path)
+            end,
         },
         LrStringUtils = {
             encodeBase64 = function(s) return "BASE64(" .. tostring(s) .. ")" end,
@@ -74,6 +91,19 @@ local function defaultStubs()
                 table.insert(H.http.requests, {
                     verb = "POST", url = url, body = body,
                     headers = headers, method = method, timeout = timeout,
+                })
+                local queued = table.remove(H.http.responses, 1)
+                if not queued then return nil, { error = { name = "no response queued" } } end
+                return queued.body, queued.headers
+            end,
+            -- Image editing is the one call that is not JSON: OpenAI takes the
+            -- photograph as a file part in a multipart form. Recorded the same
+            -- way as post, with the parts kept so a test can check what was
+            -- actually sent rather than only that something was.
+            postMultipart = function(url, content, headers, timeout)
+                table.insert(H.http.requests, {
+                    verb = "POST_MULTIPART", url = url, parts = content,
+                    headers = headers, timeout = timeout,
                 })
                 local queued = table.remove(H.http.responses, 1)
                 if not queued then return nil, { error = { name = "no response queued" } } end
@@ -152,6 +182,27 @@ end
 
 -- Replaces one stub. Call BEFORE the module under test is required, since a
 -- module captures its imports at load time.
+-- Writes a real file and returns its path. Needed because a driver that
+-- uploads a photograph opens it to measure it, and a stub cannot fake a file
+-- the SDK is not involved in reading: io.open either finds bytes on disk or it
+-- does not. Cleaned up by H.reset.
+function H.tempFile(contents)
+    local dir = os.getenv("TEMP") or os.getenv("TMPDIR") or "."
+    H.tempCount = (H.tempCount or 0) + 1
+    local path = dir .. "/venzai_test_" .. tostring(H.tempCount) .. ".jpg"
+
+    local handle = io.open(path, "wb")
+    if not handle then
+        error("the test harness could not write a temporary file at " .. path)
+    end
+    handle:write(contents or "JPEGBYTES")
+    handle:close()
+
+    H.tempPaths = H.tempPaths or {}
+    table.insert(H.tempPaths, path)
+    return path
+end
+
 function H.stub(name, value)
     H.stubs[name] = value
 end
@@ -167,6 +218,12 @@ function H.reset()
     H.passwords = {}
     H.logLines = {}
     H.http = { requests = {}, responses = {} }
+    -- path -> size. nil means "every path exists", which is what most
+    -- suites want; a table makes only the listed paths exist.
+    H.files = nil
+
+    for _, path in ipairs(H.tempPaths or {}) do os.remove(path) end
+    H.tempPaths = {}
     H.loaded = {}
     H.stubs = defaultStubs()
 end

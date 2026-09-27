@@ -23,6 +23,8 @@ shared function with a provider flag.
 
 local LrHttp = import 'LrHttp'
 
+local LrPathUtils = import 'LrPathUtils'
+
 local Json = require 'VenzAIJson'
 local Contract = require 'VenzAIProviderContract'
 local VenzAILog = require 'VenzAILog'
@@ -46,12 +48,24 @@ local M = {
     -- a different shape, and the design forbids mixing roles. The engine asks
     -- for the capability and proceeds without a reference, which is already the
     -- path a local model takes.
-    capabilities = { analyze = true, listModels = true },
+    -- generateReference is declared, and switched OFF by default through the
+    -- useReference toggle below. Its request format still comes from
+    -- documentation rather than from a call that has ever been made - but the
+    -- engine asks Contract.capabilityEnabled, which reads the switch, so the
+    -- unverified path cannot run until someone deliberately turns it on. That
+    -- is what the toggle is for: it makes an untried capability safe to ship
+    -- instead of hiding it from the person willing to try it.
+    capabilities = { analyze = true, generateReference = true, listModels = true },
     settingsFields = {
         { key = "apiKey", role = "secret", required = true,
           label = "$$$/VenzAI/Provider/OpenAI/ApiKey=API key" },
         { key = "model", role = "model", default = "gpt-5",
           label = "$$$/VenzAI/Provider/OpenAI/Model=Analysis model" },
+        { key = "imageModel", role = "model", default = "gpt-image-2",
+          label = "$$$/VenzAI/Provider/OpenAI/ImageModel=Reference image model" },
+        { key = "useReference", role = "toggle", default = false,
+          enables = "generateReference",
+          label = "$$$/VenzAI/Provider/OpenAI/UseReference=Generate a reference image first (untested)" },
         { key = "baseUrl", role = "url", default = "https://api.openai.com/v1",
           label = "$$$/VenzAI/Provider/OpenAI/BaseUrl=API base URL" },
     },
@@ -204,7 +218,137 @@ local function cannotReadAPhotograph(id)
     return false
 end
 
-function M.listModels(config)
+-- The other half of the same problem. The image field needs the models the
+-- analysis field must not see, so this one is an INCLUSION list: only a family
+-- that draws pictures belongs here, and a chat model offered for the reference
+-- image would fail on the first call.
+local DRAWS_PICTURES = { "image", "dall%-e" }
+
+local function cannotDrawAPicture(id)
+    local name = id:lower()
+    for _, pattern in ipairs(DRAWS_PICTURES) do
+        if name:find(pattern) then return false end
+    end
+    return true
+end
+
+-- Generates the reference image: the SAME photograph, finished, which the
+-- analysis then reverse-engineers into develop settings.
+--
+-- This is the one call in the plug-in that is not JSON. OpenAI's image editing
+-- takes the photograph as a file in a multipart form, because it is an upload
+-- rather than a field, so it goes through LrHttp.postMultipart instead of the
+-- LrHttp.post every other call here uses.
+--
+-- The photograph travels BY PATH, not as the base64 the analysis uses. Two
+-- details cost six rejected calls, both answered with the same unhelpful
+-- "Invalid image file or mode for image 1":
+--
+--   * the part is called "image[]", not "image" - the endpoint takes a list
+--     even when there is one image in it;
+--   * the part carries the file, not the base64 text of the file. A string
+--     describing a JPEG is not a JPEG.
+--
+-- The engine already exported that JPEG to disk to encode it, so it passes the
+-- path beside the base64 and each driver takes the form its protocol wants.
+function M.generateReference(request, config)
+    if config.imageModel == nil or config.imageModel == "" then
+        return Contract.failure("config_invalid", nil, "missing_image_model")
+    end
+
+    -- The photograph and the instruction arrive in the same `parts` list the
+    -- analysis uses, so the driver picks them apart rather than the engine
+    -- knowing which provider wants what.
+    local prompt, photo
+    for _, part in ipairs(request.parts or {}) do
+        if part.text and not prompt then
+            prompt = part.text
+        elseif part.image and not photo then
+            photo = part.image
+        end
+    end
+
+    if not photo then
+        return Contract.failure("driver_fault",
+            "generateReference was called without an image part")
+    end
+
+    if not request.imagePath then
+        return Contract.failure("driver_fault",
+            "this endpoint uploads the photograph as a file and the request carried no path")
+    end
+
+    -- postMultipart does arithmetic on the part's fileSize while building the
+    -- body, so a file part without one raises inside the SDK rather than
+    -- returning an error.
+    --
+    -- Measured with plain Lua rather than LrFileUtils.fileAttributes, which
+    -- answered without a fileSize for a file that had just been written and
+    -- read back successfully two lines earlier. Seeking to the end of the file
+    -- is the same answer with nothing to get wrong, and it proves the file is
+    -- readable in the same motion.
+    local handle = io.open(request.imagePath, "rb")
+    local fileSize
+    if handle then
+        fileSize = handle:seek("end")
+        handle:close()
+    end
+
+    if not handle then
+        return Contract.failure("driver_fault",
+            "could not open the exported photograph at " .. tostring(request.imagePath))
+    end
+    if not fileSize or fileSize == 0 then
+        return Contract.failure("driver_fault",
+            "the exported photograph is empty at " .. tostring(request.imagePath))
+    end
+
+    local url = endpoint(config.baseUrl, "/images/edits")
+    log("POST (multipart) " .. url)
+
+    local body, headers = LrHttp.postMultipart(url, {
+        { name = "model", value = config.imageModel },
+        { name = "prompt", value = prompt or "" },
+        {
+            name = "image[]",
+            fileName = LrPathUtils.leafName(request.imagePath),
+            filePath = request.imagePath,
+            fileSize = fileSize,
+            contentType = photo.mimeType or "image/jpeg",
+        },
+        { name = "n", value = "1" },
+    }, {
+        { field = "Authorization", value = "Bearer " .. config.apiKey },
+    }, request.timeout or M.defaultTimeout)
+
+    local status = headers and headers.status
+
+    if not body then
+        return Contract.failure("unreachable",
+            transportError(headers) or "no response received", nil, status)
+    end
+    if status ~= 200 then
+        return Contract.failure(classifyStatus(status), body:sub(1, 600), nil, status)
+    end
+
+    local data = body:match('"b64_json"%s*:%s*"([A-Za-z0-9+/=]+)"')
+    if not data then
+        return Contract.failure("empty", body:sub(1, 600), nil, status)
+    end
+
+    return Contract.success({
+        image = {
+            data = data,
+            -- The endpoint answers PNG unless asked otherwise, and the
+            -- analysis only ever re-sends this as a data URL, so the type is
+            -- stated rather than guessed from the bytes.
+            mimeType = "image/png",
+        },
+        httpStatus = status,
+    })
+end
+
+function M.listModels(config, field)
     local body, headers = LrHttp.get(endpoint(config.baseUrl, "/models"),
         { { field = "Authorization", value = "Bearer " .. config.apiKey } }, LIST_TIMEOUT)
     local status = headers and headers.status
@@ -216,9 +360,17 @@ function M.listModels(config)
         return nil, classifyStatus(status), body:sub(1, 600)
     end
     local everything = Json.stringValues(body, "id")
+
+    -- Which list to offer depends on the field being filled. The driver knows
+    -- its own field keys; nothing outside it needs to.
+    local reject = cannotReadAPhotograph
+    if field and field.key == "imageModel" then
+        reject = cannotDrawAPicture
+    end
+
     local usable = {}
     for _, id in ipairs(everything) do
-        if not cannotReadAPhotograph(id) then
+        if not reject(id) then
             table.insert(usable, id)
         end
     end

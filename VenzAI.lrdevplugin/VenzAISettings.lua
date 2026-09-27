@@ -32,6 +32,12 @@ local M = {}
 
 M.DEFAULTS = {
     refinementPasses = 3,
+
+    -- A debugging aid, off by default: when on, the run stops and shows the
+    -- reference image the provider generated, so you can see what the analysis
+    -- is actually working toward. It is the only picture in the whole pipeline
+    -- nobody ever looks at.
+    showReference = false,
 }
 
 M.MIN_PASSES = 1
@@ -66,6 +72,14 @@ function M.get(key)
     if key == "refinementPasses" then
         return M.getRefinementPasses()
     end
+    -- A boolean setting cannot go through valueOr: `false` is a value the user
+    -- chose, and treating it as absent would turn the setting back on.
+    if type(M.DEFAULTS[key]) == "boolean" then
+        local stored = prefs[key]
+        if type(stored) == "boolean" then return stored end
+        return M.DEFAULTS[key]
+    end
+
     return valueOr(prefs[key], M.DEFAULTS[key])
 end
 
@@ -120,10 +134,29 @@ function M.getProviderField(driverId, field)
         end
         return value or ""
     end
+    -- A toggle is a boolean and needs its own path. `valueOr` below treats an
+    -- empty string as absent, which is right for text and wrong here: `false`
+    -- is a value the user chose, and reading it as "absent, use the default"
+    -- would turn a switch back on every time it was read.
+    if field.role == "toggle" then
+        local stored = prefs[prefKey(driverId, field.key)]
+        if type(stored) == "boolean" then
+            return stored
+        end
+        return field.default == true
+    end
+
     return valueOr(prefs[prefKey(driverId, field.key)], field.default or "")
 end
 
 function M.setProviderField(driverId, field, value)
+    if field.role == "toggle" then
+        -- Stored as a real boolean: LrPrefs keeps the type, and a checkbox
+        -- hands us one, so there is nothing to convert on either side.
+        prefs[prefKey(driverId, field.key)] = (value == true)
+        return true
+    end
+
     if field.role == "secret" then
         local ok, err = pcall(function()
             LrPasswords.store(prefKey(driverId, field.key), value or "")

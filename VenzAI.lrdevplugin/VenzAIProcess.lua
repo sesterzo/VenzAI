@@ -28,6 +28,10 @@ local LrStringUtils = import 'LrStringUtils'
 local LrProgressScope = import 'LrProgressScope'
 local LrFunctionContext = import 'LrFunctionContext'
 local LrDialogs = import 'LrDialogs'
+-- Both only for the reference-image viewer, which is off unless the
+-- diagnostics checkbox is ticked.
+local LrView = import 'LrView'
+local LrShell = import 'LrShell'
 
 local VenzAILog = require 'VenzAILog'
 local Settings = require 'VenzAISettings'
@@ -50,6 +54,16 @@ local WORK_DIR = LrPathUtils.child(LrPathUtils.getStandardFilePath('temp'), "Ven
 -- Named after what it is, not after the model that made it: any provider
 -- declaring generateReference writes here.
 local REFERENCE_IMAGE_BASE_PATH = LrPathUtils.child(WORK_DIR, "venzai_reference")
+
+-- VenzAIProcess is a script the menu runs, not a module anyone requires, so the
+-- settings panel cannot ask it anything. The path is short and derived from two
+-- SDK calls, so the panel rebuilds it the same way rather than this file
+-- growing an export nothing else could use.
+
+-- VenzAIProcess is a script the menu runs, not a module anyone requires, so the
+-- settings panel cannot ask it anything. The path is short and derived from two
+-- SDK calls, so the panel rebuilds it the same way rather than this file
+-- growing an export nothing else could use.
 
 local function ensureWorkDir()
     if not LrFileUtils.exists(WORK_DIR) then
@@ -87,6 +101,49 @@ local function saveReferenceToWorkDir(image)
     file:write(LrStringUtils.decodeBase64(image.data))
     file:close()
     log("Reference saved to: " .. path)
+    return path
+end
+
+-- Shows the reference image the provider generated. Off unless the diagnostics
+-- checkbox is ticked, because it stops the run until it is dismissed.
+--
+-- This is the only picture in the pipeline nobody ever sees: the analysis
+-- reverse-engineers it into sliders and it is never applied to the photograph,
+-- so when a run comes out wrong there is no way to tell a bad target from a
+-- bad reading of a good one. This closes that gap.
+--
+-- LrView's picture control is not something this plug-in has used before, so
+-- the whole dialog is attempted under LrTasks.pcall: if the host will not draw
+-- it, the file is revealed in Explorer or the Finder instead, which is a worse
+-- view of the same image rather than a failed run.
+local function showReferenceImage(path, driverName)
+    if not path then
+        log("Reference display: no file on disk to show.")
+        return
+    end
+
+    local shown = LrTasks.pcall(function()
+        local f = LrView.osFactory()
+        LrDialogs.presentModalDialog {
+            title = LOC("$$$/VenzAI/Debug/ReferenceTitle=Reference image from ^1",
+                LOC(driverName)),
+            contents = f:column {
+                spacing = f:control_spacing(),
+                f:static_text {
+                    title = LOC "$$$/VenzAI/Debug/ReferenceCaption=This is the target the analysis is working toward. It is never applied to the photograph.",
+                },
+                f:picture { value = path, frame_width = 1 },
+                f:static_text { title = LOC("$$$/VenzAI/Debug/ReferenceWhere=Saved in: ^1", path) },
+            },
+            actionVerb = LOC "$$$/VenzAI/Debug/ReferenceContinue=Continue",
+            cancelVerb = "< exclude >",
+        }
+    end)
+
+    if not shown then
+        log("Reference display: this host would not draw the picture; revealing the file instead.")
+        LrTasks.pcall(function() LrShell.revealInShell(path) end)
+    end
 end
 
 -- Exports the CURRENT state of the photo (already including the development
@@ -175,6 +232,18 @@ LrTasks.startAsyncTask(function()
     end
     local config = Settings.providerConfig(driver.id, driver.settingsFields)
     local passes = Settings.getRefinementPasses()
+
+    -- The build number, first thing. Lightroom caches plug-in code until it is
+    -- reloaded, so a fix on disk can be absent from the running plug-in - and
+    -- the symptom is an unchanged log line, which reads as "the fix did not
+    -- work" rather than "the fix is not loaded". Info.lua is a plain module
+    -- that returns the manifest, so the running code can read its own version.
+    local okInfo, info = pcall(function() return require 'Info' end)
+    if okInfo and info and info.VERSION then
+        local v = info.VERSION
+        log(string.format("VenzAI %d.%d.%d build %d",
+            v.major or 0, v.minor or 0, v.revision or 0, v.build or 0))
+    end
 
     log(string.format("=== VenzAI start (provider=%s, model=%s, passes=%d) ===",
         driver.id, tostring(config.model), passes))
@@ -296,7 +365,17 @@ LrTasks.startAsyncTask(function()
         log(string.format("Pass %d: export completed: %s", pass, tostring(tempPath)))
 
         local currentBase64 = encodeFileBase64(tempPath)
-        LrFileUtils.delete(tempPath)
+
+        -- NOT deleted here. It used to be, one line after encoding - and the
+        -- reference request thirty lines below hands that same path to a driver
+        -- that uploads the photograph as a file. The driver opened a path whose
+        -- file had already gone, and reported that it could not read the
+        -- export, which read as a permissions problem for five attempts.
+        --
+        -- Deleted after the reference step instead, where nothing needs it any
+        -- more. An error path that breaks out before then leaves one JPEG
+        -- behind, which the next run overwrites: the name is the photograph's,
+        -- so a leak is one file and not a growing pile.
 
         if not currentBase64 then
             log(string.format("Error reading the exported file on pass %d.", pass))
@@ -326,10 +405,18 @@ LrTasks.startAsyncTask(function()
         -- that offers it gets asked once, on the first pass; one that does not is
         -- simply never asked, and the run proceeds on the plain photo. This is
         -- the last place the engine used to test for one particular provider.
-        if driver.capabilities.generateReference and pass == 1 then
+        -- Not "does this driver declare it" but "is it on": a driver may
+        -- offer a toggle that switches the capability off, and the contract is
+        -- the one place that knows how to answer.
+        if Contract.capabilityEnabled(driver, "generateReference", config) and pass == 1 then
             progressScope:setCaption(LOC "$$$/VenzAI/Progress/GeneratingReference=Generating a professional reference...")
 
             local response = Contract.call(driver, "generateReference", {
+                -- Both forms of the same photograph. Gemini posts JSON and
+                -- wants the base64; OpenAI uploads a file and wants the path.
+                -- The engine holds both already, so neither driver has to
+                -- convert, and neither has to know what the other needs.
+                imagePath = tempPath,
                 parts = {
                     { text = Prompts.buildReferencePrompt() },
                     { image = { mimeType = "image/jpeg", data = currentBase64 } },
@@ -341,7 +428,11 @@ LrTasks.startAsyncTask(function()
                 referenceImage = response.image
                 log(string.format("Reference image obtained: mime=%s, base64 length=%d",
                     tostring(referenceImage.mimeType), #referenceImage.data))
-                saveReferenceToWorkDir(referenceImage)
+                local referencePath = saveReferenceToWorkDir(referenceImage)
+
+                if Settings.get("showReference") then
+                    showReferenceImage(referencePath, driver.displayName)
+                end
             else
                 -- A missing reference is not a reason to stop: analysis on the
                 -- plain photo is the path a provider without the capability
@@ -350,6 +441,9 @@ LrTasks.startAsyncTask(function()
                     tostring(response.errorKind), tostring(response.errorDetail)))
             end
         end
+
+        -- Everything that needs the exported file on disk has had it.
+        LrFileUtils.delete(tempPath)
 
         if progressScope:isCanceled() then
             log("Cancelled after the reference step on pass " .. pass .. ".")

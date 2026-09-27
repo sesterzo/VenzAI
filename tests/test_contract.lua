@@ -50,6 +50,119 @@ local function runAsTask(fn)
 end
 
 return {
+    --------------------------------------------------------------------------
+    -- Toggles: a capability the user can switch off
+    --------------------------------------------------------------------------
+    -- A declared capability used to BE the switch: the only way to stop Gemini
+    -- generating a reference image was to delete the declaration from the
+    -- source. A driver can now also declare a field that switches one of its
+    -- capabilities, and the engine asks the contract rather than reading the
+    -- capabilities table directly.
+    { "a toggle field is a valid role", function()
+        local ok, problem = Contract.validateDriver(goodDriver({
+            capabilities = { analyze = true, generateReference = true },
+            generateReference = function()
+                return Contract.success({ image = { data = "x", mimeType = "image/png" } })
+            end,
+            settingsFields = {
+                { key = "useReference", role = "toggle", default = true,
+                  enables = "generateReference",
+                  label = "$$$/x=Generate a reference image" },
+            },
+        }))
+        assert(ok, "a well-formed toggle was rejected: " .. tostring(problem))
+    end },
+
+    { "a toggle's default must be a boolean", function()
+        local ok, problem = Contract.validateDriver(goodDriver({
+            capabilities = { analyze = true, generateReference = true },
+            generateReference = function()
+                return Contract.success({ image = { data = "x", mimeType = "image/png" } })
+            end,
+            settingsFields = {
+                { key = "useReference", role = "toggle", default = "yes",
+                  enables = "generateReference", label = "$$$/x=Toggle" },
+            },
+        }))
+        assert(not ok, "a string default on a toggle was accepted")
+        assert(problem:find("useReference"), "the field must be named: " .. tostring(problem))
+    end },
+
+    { "every other role still wants a string default", function()
+        local ok = Contract.validateDriver(goodDriver({
+            settingsFields = {
+                { key = "model", role = "model", default = true, label = "$$$/x=Model" },
+            },
+        }))
+        assert(not ok, "a boolean default slipped into a text field")
+    end },
+
+    { "a toggle must switch a capability the driver actually declares", function()
+        -- Otherwise the switch is wired to nothing and silently does nothing,
+        -- which is the failure this whole design exists to avoid.
+        local ok, problem = Contract.validateDriver(goodDriver({
+            settingsFields = {
+                { key = "useReference", role = "toggle", default = true,
+                  enables = "generateReference", label = "$$$/x=Toggle" },
+            },
+        }))
+        assert(not ok, "a toggle wired to an undeclared capability was accepted")
+        assert(problem:find("generateReference"), "got " .. tostring(problem))
+    end },
+
+    { "a toggle naming a capability outside the closed set is rejected", function()
+        local ok, problem = Contract.validateDriver(goodDriver({
+            settingsFields = {
+                { key = "t", role = "toggle", default = true,
+                  enables = "telepathy", label = "$$$/x=Toggle" },
+            },
+        }))
+        assert(not ok and problem:find("telepathy"), "got " .. tostring(problem))
+    end },
+
+    --------------------------------------------------------------------------
+    { "a capability with no toggle is enabled by being declared", function()
+        local driver = goodDriver()
+        assert(Contract.capabilityEnabled(driver, "analyze", {}),
+            "a driver with no toggle must behave exactly as before")
+    end },
+
+    { "a capability the driver does not declare is never enabled", function()
+        assert(not Contract.capabilityEnabled(goodDriver(), "generateReference", {}))
+    end },
+
+    { "a toggle switched on enables its capability", function()
+        local driver = goodDriver({
+            capabilities = { analyze = true, generateReference = true },
+            generateReference = function()
+                return Contract.success({ image = { data = "x", mimeType = "image/png" } })
+            end,
+            settingsFields = {
+                { key = "useReference", role = "toggle", default = true,
+                  enables = "generateReference", label = "$$$/x=Toggle" },
+            },
+        })
+        assert(Contract.capabilityEnabled(driver, "generateReference",
+            { useReference = true }))
+    end },
+
+    { "a toggle switched off disables it, though the driver still declares it", function()
+        local driver = goodDriver({
+            capabilities = { analyze = true, generateReference = true },
+            generateReference = function()
+                return Contract.success({ image = { data = "x", mimeType = "image/png" } })
+            end,
+            settingsFields = {
+                { key = "useReference", role = "toggle", default = true,
+                  enables = "generateReference", label = "$$$/x=Toggle" },
+            },
+        })
+        assert(not Contract.capabilityEnabled(driver, "generateReference",
+            { useReference = false }))
+        assert(Contract.capabilityEnabled(driver, "analyze", { useReference = false }),
+            "a toggle must switch only the capability it names")
+    end },
+
     -- Regression, found in Lightroom: "Detect models" died with "Yielding is
     -- not allowed within a C or metamethod call". Every LrHttp call yields, and
     -- in Lua 5.1 a function called through pcall - a C function - may not

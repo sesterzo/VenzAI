@@ -23,6 +23,8 @@ local LrFunctionContext = import 'LrFunctionContext'
 local LrBinding = import 'LrBinding'
 local LrShell = import 'LrShell'
 local LrFileUtils = import 'LrFileUtils'
+-- Only to rebuild the working-folder path the engine uses.
+local LrPathUtils = import 'LrPathUtils'
 
 local VenzAILog = require 'VenzAILog'
 local Settings = require 'VenzAISettings'
@@ -87,7 +89,15 @@ local function groupForDriver(f, propertyTable, driver)
         local key = propertyKey(driver.id, field.key)
 
         local control
-        if field.role == "secret" then
+        if field.role == "toggle" then
+            -- A checkbox carries its own label, so this row does not repeat it
+            -- in the static_text on the left the way a text field does.
+            control = f:checkbox {
+                value = LrView.bind(key),
+                title = LOC(field.label),
+                enabled = enabledForThisDriver(),
+            }
+        elseif field.role == "secret" then
             control = f:password_field {
                 value = LrView.bind(key),
                 width_in_chars = 30,
@@ -104,7 +114,9 @@ local function groupForDriver(f, propertyTable, driver)
         local row = {
             spacing = f:control_spacing(),
             f:static_text {
-                title = LOC(field.label),
+                -- Empty for a toggle: the checkbox says what it does, and a
+                -- second copy of the same words beside it reads as a mistake.
+                title = (field.role == "toggle") and "" or LOC(field.label),
                 width = LrView.share "venzai_label_width",
                 enabled = enabledForThisDriver(),
             },
@@ -157,7 +169,7 @@ function detectModelsAction(propertyTable, driver, field)
             -- round trip that came back "the credentials were rejected" instead
             -- of "the API key is empty". The funnel also pcalls the driver, so a
             -- field arriving nil cannot surface as a raw Lua error dialog.
-            local names, errorKind, errorDetail, reasonKey = Contract.listModels(driver, config)
+            local names, errorKind, errorDetail, reasonKey = Contract.listModels(driver, config, field)
 
             if not names then
                 log(string.format("Detect models failed for %s: %s (%s)",
@@ -212,6 +224,29 @@ function detectModelsAction(propertyTable, driver, field)
             end
         end)
     end)
+end
+
+-- Where VenzAIProcess keeps the JPEG it sends to the provider and the
+-- reference image that comes back. Built the same way the engine builds it -
+-- VenzAIProcess is a menu script, not a module this file can require - and kept
+-- beside the log button because it answers the same question: where do I go to
+-- see what actually happened.
+local function workFolderPath()
+    return LrPathUtils.child(LrPathUtils.getStandardFilePath('temp'), "VenzAI")
+end
+
+local function showWorkFolderAction()
+    local folder = workFolderPath()
+
+    if not LrFileUtils.exists(folder) then
+        LrDialogs.message(
+            LOC "$$$/VenzAI/Settings/Work/NotFoundTitle=Nothing to show yet",
+            LOC("$$$/VenzAI/Settings/Work/NotFoundBody=VenzAI creates this folder the first time it runs:\n\n^1", folder),
+            "info")
+        return
+    end
+
+    LrShell.revealInShell(folder)
 end
 
 -- Opens the folder LrLogger writes into, in Explorer or the Finder. The log no
@@ -276,6 +311,15 @@ local function sectionsForTopOfDialog(f, propertyTable)
         log("User changed refinementPasses -> '" .. tostring(propertyTable.refinementPasses) .. "'")
     end)
 
+    -- A debugging aid rather than a preference: it stops a run to show the
+    -- reference image, so it lives beside the log button rather than among the
+    -- settings that shape the edit.
+    propertyTable.showReference = Settings.get("showReference")
+    propertyTable:addObserver("showReference", function()
+        Settings.set("showReference", propertyTable.showReference == true)
+        log("User changed showReference -> '" .. tostring(propertyTable.showReference) .. "'")
+    end)
+
     -- Every declared field of every driver, mirrored in and written straight
     -- back so a change is saved immediately. A secret is never logged, not even
     -- as a length.
@@ -333,6 +377,7 @@ local function sectionsForTopOfDialog(f, propertyTable)
     })
 
     table.insert(section, f:row {
+        bind_to_object = propertyTable,
         spacing = f:control_spacing(),
         f:static_text {
             title = LOC "$$$/VenzAI/Settings/Log/Label=Diagnostics:",
@@ -341,6 +386,14 @@ local function sectionsForTopOfDialog(f, propertyTable)
         f:push_button {
             title = LOC "$$$/VenzAI/Settings/Log/ShowButton=Show log file",
             action = showLogAction,
+        },
+        f:push_button {
+            title = LOC "$$$/VenzAI/Settings/Work/ShowButton=Show working folder",
+            action = showWorkFolderAction,
+        },
+        f:checkbox {
+            value = bind "showReference",
+            title = LOC "$$$/VenzAI/Settings/ShowReference=Show the reference image during a run",
         },
     })
 
