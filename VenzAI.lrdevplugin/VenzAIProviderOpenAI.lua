@@ -136,6 +136,18 @@ end
 -- not ours to set on that model. Detected on the service's own words rather
 -- than on a list of model names, which would be out of date by the time it
 -- shipped.
+-- Which parameter the image endpoint refused, or nil.
+--
+-- Read from the error's own "param" field rather than from its prose. Matching
+-- the wording is what broke the previous version: it looked for "not supported"
+-- and the API answered "The model 'gpt-image-2' does not support the
+-- 'input_fidelity' parameter." - so the retry never fired and a whole reference
+-- was lost over one optional field. The structured field cannot drift like that.
+local function refusedParameter(body)
+    if not body then return nil end
+    return body:match('"param"%s*:%s*"([%w_]+)"')
+end
+
 local function refusesTemperature(body)
     if not body then return false end
     return body:find("unsupported_value", 1, true) ~= nil
@@ -304,25 +316,78 @@ function M.generateReference(request, config)
     end
 
     local url = endpoint(config.baseUrl, "/images/edits")
-    log("POST (multipart) " .. url)
+    -- Which model drew the reference is the first thing anyone asks when the
+    -- reference is wrong, and until now the log could not answer it.
+    log("Reference image model: " .. tostring(config.imageModel))
 
-    local body, headers = LrHttp.postMultipart(url, {
-        { name = "model", value = config.imageModel },
-        { name = "prompt", value = prompt or "" },
-        {
-            name = "image[]",
-            fileName = LrPathUtils.leafName(request.imagePath),
-            filePath = request.imagePath,
-            fileSize = fileSize,
-            contentType = photo.mimeType or "image/jpeg",
-        },
-        { name = "n", value = "1" },
-    }, {
-        { field = "Authorization", value = "Bearer " .. config.apiKey },
-    }, request.timeout or M.defaultTimeout)
+    -- The reference is a TARGET, and a target that invents the material it is
+    -- made of is a worse target. Left at their defaults this endpoint returns
+    -- a medium-quality render that re-draws faces, hands and fabric freely;
+    -- asking for high quality and high fidelity to the input costs one field
+    -- each and keeps the picture recognisably the same photograph.
+    --
+    -- Size is deliberately left alone: "auto" already answers 1536x1024 for a
+    -- landscape frame and 1024x1536 for an upright one, and naming a size
+    -- ourselves would only be a chance to name the wrong one.
+    -- Asked for one at a time, and dropped one at a time. The models behind
+    -- this endpoint do not take the same set - gpt-image-2 accepts quality and
+    -- refuses input_fidelity - and giving up both over one refusal would throw
+    -- away a field that was never the problem.
+    local refinements = { quality = "high", input_fidelity = "high" }
 
+    local function parts()
+        local list = {
+            { name = "model", value = config.imageModel },
+            { name = "prompt", value = prompt or "" },
+            {
+                name = "image[]",
+                fileName = LrPathUtils.leafName(request.imagePath),
+                filePath = request.imagePath,
+                fileSize = fileSize,
+                contentType = photo.mimeType or "image/jpeg",
+            },
+            { name = "n", value = "1" },
+        }
+        for name, value in pairs(refinements) do
+            table.insert(list, { name = name, value = value })
+        end
+        return list
+    end
+
+    local function asked()
+        local names = {}
+        for name in pairs(refinements) do table.insert(names, name) end
+        table.sort(names)
+        return #names > 0 and (" [" .. table.concat(names, ", ") .. "]") or ""
+    end
+
+    local function send()
+        log("POST (multipart) " .. url .. asked())
+        return LrHttp.postMultipart(url, parts(), {
+            { field = "Authorization", value = "Bearer " .. config.apiKey },
+        }, request.timeout or M.defaultTimeout)
+    end
+
+    local body, headers = send()
     local status = headers and headers.status
 
+    -- One attempt per optional field and no more: a loop that keeps retrying a
+    -- 400 it does not understand is how a run hangs on a bad request.
+    for _ = 1, 2 do
+        if not (body and status == 400) then break end
+
+        -- The body of a 400 is the only place that says WHY, and a fallback
+        -- that hides its own reason is a fallback nobody can check.
+        log("The image endpoint refused the request: " .. tostring(body):sub(1, 500))
+
+        local refused = refusedParameter(body)
+        if not refused or refinements[refused] == nil then break end
+
+        log(string.format("This image model does not take '%s'; dropping it and asking again.", refused))
+        refinements[refused] = nil
+        body, headers = send()
+        status = headers and headers.status
+    end
     if not body then
         return Contract.failure("unreachable",
             transportError(headers) or "no response received", nil, status)

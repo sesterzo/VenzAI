@@ -178,6 +178,106 @@ return {
         assert(prompt:find("Exposure2012", 1, true), "the parameter vocabulary is missing")
     end },
 
+    --------------------------------------------------------------------------
+    -- The brief that makes the target
+    --------------------------------------------------------------------------
+    { "the reference brief no longer orders a dark, loaded look", function()
+        local brief = Prompts.buildReferencePrompt()
+        -- These were ours, not the model's, and they came back in every
+        -- reference: a little dark, colours well loaded, the same everywhere.
+        assert(not brief:find("Deep blacks", 1, true),
+            "we were asking for the darkness we then complained about")
+        assert(not brief:find("too small to see is the same as no edit", 1, true),
+            "we were asking for the loudness we then complained about")
+        assert(not brief:find("Commit to a direction", 1, true))
+    end },
+
+    { "the reference brief asks for open light and believable colour", function()
+        local brief = Prompts.buildReferencePrompt()
+        assert(brief:find("OPEN, NATURAL LIGHT", 1, true), "the light is not specified")
+        assert(brief:find("err on the side of the brighter", 1, true),
+            "the tie-break has to point away from dark")
+        assert(brief:find("BELIEVABLE COLOUR", 1, true))
+        assert(brief:find("Saturation is the last resort", 1, true),
+            "loaded colour needs to be named as the failure it is")
+        assert(brief:find("does not announce itself", 1, true),
+            "the standard of the trade is the whole point")
+    end },
+
+    { "the reference brief still protects the photograph", function()
+        -- The target is reverse-engineered into develop settings, so it has to
+        -- remain the same photograph however it is treated.
+        local brief = Prompts.buildReferencePrompt()
+        assert(brief:find("The same framing, the same subject", 1, true))
+        assert(brief:find("No object added, removed, moved or invented", 1, true))
+        assert(brief:find("Fully photorealistic", 1, true))
+    end },
+
+    --------------------------------------------------------------------------
+    -- Two jobs, two prompts
+    --------------------------------------------------------------------------
+    { "with a reference the model is an instrument, not the author", function()
+        local prompt = Prompts.buildAnalysisPrompt(1, 3, true, nil, nil)
+        assert(prompt:find("measuring instrument", 1, true), "the job is not stated")
+        assert(prompt:find("NOT the author", 1, true), "the model is still being given the edit to author")
+        assert(not prompt:find("The edit is yours to author", 1, true),
+            "the authorial framing is what made every photograph get the same numbers")
+    end },
+
+    { "without a reference the model must still be the author", function()
+        -- There is no target to measure against, so the older prompt is the
+        -- only one that can work - it is kept whole for exactly this case.
+        local prompt = Prompts.buildAnalysisPrompt(1, 3, false, nil, nil)
+        assert(prompt:find("The edit is yours to author", 1, true),
+            "with nothing to measure against, the model has to decide")
+        assert(not prompt:find("measuring instrument", 1, true),
+            "there is nothing to measure")
+    end },
+
+    { "the reference is named as the target, not as mood", function()
+        local prompt = Prompts.buildAnalysisPrompt(1, 3, true, nil, nil)
+        assert(prompt:find("IMAGE 2 is the TARGET", 1, true), "the reference is not named as the target")
+        assert(not prompt:find("useful ONLY to understand", 1, true),
+            "demoting the target to inspiration is how it got ignored")
+        -- And what it must never be trusted for. It is a re-render at a
+        -- fraction of the photograph's resolution: its tone and colour are
+        -- decisions, its texture is an artefact of how it was made.
+        assert(prompt:find("Never take crop, geometry, horizon", 1, true),
+            "geometry must still come from the photograph itself")
+        assert(prompt:find("reliable for TONE, COLOUR, CONTRAST and LIGHT and for nothing else", 1, true),
+            "the target is presented as reliable for more than it is")
+        assert(prompt:find("JUDGED ON IMAGE 1 ALONE", 1, true),
+            "detail measured against a generative re-render measures the artefact")
+    end },
+
+    { "silence must mean compared, not skipped", function()
+        -- A run answered with 11 keys and no masks at all: the rule that an
+        -- unseen difference is omitted had been read as "be brief".
+        local prompt = Prompts.buildAnalysisPrompt(1, 3, true, nil, nil)
+        assert(prompt:find('never "I did not look"', 1, true),
+            "omission has to be a finding, not a shortcut")
+        assert(prompt:find("GO THROUGH ALL SIX REGIONS, ONE AT A TIME", 1, true),
+            "the regions have to be a roll call or they get skipped wholesale")
+        assert(prompt:find("separates a photograph from a filter", 1, true))
+    end },
+
+    { "a measuring pass may undo its own overshoot", function()
+        local prompt = Prompts.buildAnalysisPrompt(2, 3, true, "Tint = 8", nil)
+        assert(not prompt:find("do NOT undo what already works well", 1, true),
+            "the brake left 13 points of magenta on a photograph and corrected it by 4")
+        assert(prompt:lower():find("overshoot", 1, true), "coming back must be allowed explicitly")
+    end },
+
+    { "every step of a measuring pass is a comparison", function()
+        local prompt = Prompts.buildAnalysisPrompt(1, 3, true, nil, nil)
+        assert(prompt:find("Every one of them is a COMPARISON", 1, true))
+        -- Say the difference in words before reaching for a number.
+        assert(prompt:find("SAY THE DIFFERENCE IN PLAIN WORDS FIRST", 1, true))
+        -- And the way out of reciting a preset.
+        assert(prompt:find("A parameter you cannot see a difference in is a parameter you leave out", 1, true),
+            "silence must be a valid answer, or the preset comes back")
+    end },
+
     { "pass 1 does not claim there is a reference image", function()
         local without = Prompts.buildAnalysisPrompt(1, 3, false, nil)
         local with = Prompts.buildAnalysisPrompt(1, 3, true, nil)

@@ -28,3 +28,4 @@ desktop.ini
 # work is in progress; they are not what someone downloading the plug-in came
 # for, and they go stale the moment the code moves past them.
 docs/
+tests/__pycache__/
