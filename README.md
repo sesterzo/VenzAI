@@ -40,11 +40,16 @@ either **Library ▸ Plug-in Extras** or **File ▸ Plug-in Extras**. Then:
 1. **A snapshot is taken** — `VenzAI - Original`. This is your way back.
 2. **The photo is exported** to a temporary JPEG, 2048 px, sRGB. Your original
    file is never touched or read by anything but Lightroom.
-3. **A reference image is generated** — Gemini only. The model produces a
-   retouched version of the same frame, which becomes the target the analysis
-   works toward. It is never applied to your photo; it is a goal, not a result.
-4. **The photograph is analysed**, and the model answers with how far to move
-   each slider.
+3. **A reference image is generated**, if you asked for one. The model
+   produces a retouched version of the same frame, which becomes the target the
+   analysis works toward. It is never applied to your photo; it is a goal, not
+   a result — and you can look at it while the run happens (see Diagnostics).
+4. **The photograph is analysed**, and the model answers with how far to
+   MOVE each slider — not where to put it. It can see that a picture is still
+   half a stop dark; it cannot see that Exposure is currently at 0.35, because
+   that number is not in the pixels. So it reports what is still missing, the
+   plug-in adds it to what is already there, and "nothing to change" is an
+   ordinary answer rather than a destructive one.
 5. **The settings are applied**, local masks included, and a snapshot is taken.
 6. **Steps 2 to 5 repeat** for the number of refinement passes you set. Each
    pass sees the photograph as it now stands, is told what is already applied,
@@ -105,10 +110,7 @@ current answer.
 | API key | From Google AI Studio. Stored in the system keychain, never in the preferences file. |
 | Analysis model | The model that reads the photograph and answers with settings. |
 | Reference image model | The model that generates the target image. |
-
-Gemini is the only provider that generates a reference image, because it is the
-only one whose image generation lives behind the same protocol. With the other
-two, the analysis works from the photograph alone.
+| Generate a reference image first | On by default. Turn it off to see what the reference is actually worth on a given photograph — same model, same photo, no target. |
 
 ### OpenAI (cloud)
 
@@ -116,12 +118,17 @@ two, the analysis works from the photograph alone.
 |---|---|
 | API key | From the OpenAI platform. Stored in the system keychain. |
 | Analysis model | Needs to read images and answer in JSON. |
+| Reference image model | An image model, for the target image. |
+| Generate a reference image first | Off by default. |
 | API base URL | `https://api.openai.com/v1` by default. Change it only for a compatible gateway. |
 
-The model list is filtered to the families that can plausibly do this job —
-embeddings, speech, transcription, image generation and moderation models are
-hidden, because none of them can read a photograph and answer with develop
-settings.
+**Detect models** offers a different list for each field, because the models
+that can read a photograph and the models that can draw one are disjoint sets:
+the analysis field hides speech, embedding, moderation and image models, and
+the reference field shows only the families that generate pictures.
+
+Ollama is the one provider with no reference image: it does not generate them.
+There the analysis works from the photograph alone.
 
 ### Ollama (local, offline)
 
@@ -153,11 +160,32 @@ photograph on it.
 
 ## When something goes wrong
 
-VenzAI writes a detailed log of every run. The **Show log file** button in the
-settings panel opens the folder; the file is `VenzAI.log`:
+The settings panel has a **Diagnostics** row:
+
+- **Show log file** — opens the folder the log is written to.
+- **Show working folder** — opens where VenzAI keeps the JPEG it sends and the
+  reference image that comes back.
+- **Show the reference image during a run** — stops the run to show you the
+  target the analysis is working toward. Off by default. It is the only picture
+  in the pipeline nobody otherwise sees, and without it a bad target and a bad
+  reading of a good one look exactly the same.
+
+VenzAI writes a detailed log of every run. The file is `VenzAI.log`:
 
 - **Windows** — `%LOCALAPPDATA%\Adobe\Lightroom\Logs\LrClassicLogs\`
 - **macOS** — `~/Library/Logs/Adobe/Lightroom/LrClassicLogs/`
+
+The first line of every run is the build number:
+
+```
+VenzAI 1.4.0 build 60
+=== VenzAI start (provider=gemini, model=..., passes=3) ===
+```
+
+Check it before anything else. Lightroom caches plug-in code until you press
+Reload Plug-in, so a change on disk can be absent from the plug-in that is
+running — and the symptom is a log that has not changed, which reads as "the
+fix did not work" rather than "the fix is not loaded".
 
 The log names what was asked of the model, what it answered, what was applied,
 and — importantly — what Lightroom refused to keep. A line reading
