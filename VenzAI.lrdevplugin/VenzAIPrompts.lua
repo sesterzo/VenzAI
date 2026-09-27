@@ -97,10 +97,10 @@ Example of the requested format (names/values are just an example, compute your 
   "SharpenRadius": 1.0,
   "SharpenDetail": 25,
   "CropAngle": -1.2,
-  "CropLeft": 0.02,
-  "CropTop": 0,
-  "CropRight": 1,
-  "CropBottom": 0.95,
+  "CropLeft": 0.05,
+  "CropTop": 0.18,
+  "CropRight": 0.72,
+  "CropBottom": 0.85,
   "PostCropVignetteAmount": -15,
   "PostCropVignetteMidpoint": 50,
   "PostCropVignetteFeather": 65,
@@ -378,7 +378,9 @@ Reason internally through these steps (do not write the reasoning in the final a
 4. THE MIXER, COLOUR BY COLOUR: go through the hues that are actually in this frame - Red, Orange, Yellow, Green, Aqua, Blue, Purple, Magenta - and for each one compare it between the two images on all three dimensions: is it a different hue, is it more or less intense, is it lighter or darker? A colour that looks the same in both images gets no key.
 5. DETAIL - JUDGED ON IMAGE 1 ALONE, NOT AGAINST THE TARGET: sharpening, noise reduction and grain are decided by looking at IMAGE 1 and at the material in it - skin, fur, foliage, stone, fabric. IMAGE 2 was re-rendered at a fraction of this photograph's resolution, so its texture and micro-detail are an artefact of how it was made, not a decision anyone took: measuring sharpness or grain against it measures the artefact. When in doubt here, leave detail alone.
 6. VIGNETTE: are the corners of IMAGE 2 darker or brighter than the corners of IMAGE 1, relative to the centre? If they are the same, leave the vignette alone.
-7. HORIZON AND FRAMING - THE ONE STEP THAT IS NOT A COMPARISON: never take geometry from IMAGE 2, which is not reliable for composition. Judge tilt and crop from IMAGE 1 alone. Identify the single most reliable horizontal or vertical reference line in IMAGE 1 (natural horizon, waterline, tree trunk, building edge) and estimate its tilt -> CropAngle. Use 0 only if you found such a line AND measured it within 0.3 degrees of level, not merely because you are unsure. Propose a crop only for something genuinely wrong at the edges of IMAGE 1, always keeping the original aspect ratio.
+7. HORIZON AND FRAMING - THE ONE STEP WHERE YOU ARE THE AUTHOR, NOT THE INSTRUMENT: everything else in this answer is measured against IMAGE 2. Composition is not, because IMAGE 2 is not reliable for it - so here, and only here, the decision is yours, and "no difference to report" is not an available answer. Look at IMAGE 1 and decide.
+   TILT: identify the single most reliable horizontal or vertical reference line (natural horizon, waterline, tree trunk, building edge) and estimate its tilt -> CropAngle. Use 0 only if you found such a line AND measured it within 0.3 degrees of level, not merely because you are unsure.
+   CROP: ask where the subject sits in the frame and how much of the frame is doing nothing. A subject pushed hard to one side with a large empty expanse opposite it, a subject small in the middle of a wide scene, a distracting edge - these are the cases a crop exists for, and the crop that fixes them is usually a LARGE one. Cutting 30-50% of the frame away is an ordinary decision when that is what the picture needs; a timid 2% trim is almost never the right answer, and leaving the frame untouched because the crop would be big is the wrong reason to leave it untouched. Keep the original aspect ratio, and keep the subject whole - never cut through it, and leave the space it is moving or looking into. If after all that the framing genuinely is right, say so with 0, 0, 1, 1.
 8. WHAT MOVED MORE THAN THE REST - GO THROUGH ALL SIX REGIONS, ONE AT A TIME: subject, people, objects, sky, landscape, background. For each one that is actually present in this frame, ask the same question: does it differ between the two images BY MORE THAN the global movements you have just described? A subject brought forward while everything else stayed, a sky given its own light, a background pushed down and away. That excess is what a mask is for, and the local values are the excess ONLY, not the whole difference. This is the step that separates a photograph from a filter laid over one, and it is the step most easily skipped because the answer is shorter without it. A finished edit almost always treats its subject and its ground differently: if you conclude that no region does, you must be able to say that you compared all six and found each one moving exactly with the frame.
 9. SELF-CHECK: for every value you are about to return, be able to point at what you saw in the two images that produced it. Delete any value you cannot point at - especially the ones that feel like part of a good edit. Then the technical checks: your Temperature movement is in the units the current value is reported in; the crop, if any, keeps the original aspect ratio and stays within 0-1; each Masks entry's "type" is one of the allowed values, with no duplicate types; the three parametric split points, if present, are strictly increasing; ConvertToGrayscale is an unquoted boolean and GrayMixer<Color> appears only alongside ConvertToGrayscale = true; every number is a MOVEMENT from the current value, except the keys listed as positions. Silently fix anything that violates these before producing the final JSON.
 ]]
@@ -462,6 +464,7 @@ Your local values are movements too: added to what the mask already carries, the
 
 For CropAngle: this is the RESIDUAL rotation needed looking at THIS image (not a cumulative total across previous passes). If already straight, use 0.
 For CropLeft/CropTop/CropRight/CropBottom: normalized 0-1 fractions of THIS image (0,0 = top-left corner, 1,1 = bottom-right corner). ALWAYS subtractive. If the framing is already fine: 0, 0, 1, 1.
+To keep the original aspect ratio, the width you keep and the height you keep must be the SAME fraction: (CropRight - CropLeft) = (CropBottom - CropTop). The crop in the example above keeps 0.67 of each, which is half the area of the frame - that is what a real crop looks like, and the numbers there are an example of the SCALE as much as of the format.
 
 Final reminder: your entire response must be a single valid JSON object as described above and nothing else - no markdown fences, no explanation, no text before or after the braces.
 ]]

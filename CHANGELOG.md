@@ -11,14 +11,14 @@ running; it does not mean anything on its own.
 
 ## 1.1.1
 
-The same design as 1.1, and the first release that has been run end to end on
-real photographs and judged good.
+Nothing in the plug-in behaves differently from 1.1. This release marks the
+state that was run end to end on real photographs - a concert indoors and
+birds at a reserve - and judged good: a version number to come back to.
 
-### Changed
+### For anyone working on the code
 
-- The repository holds the plug-in, its tests and its README, and nothing
-  else. The continuous integration workflow is gone: run the suite yourself
-  with `python tests/run.py`.
+- There is no longer a continuous integration workflow. Run the suite yourself
+  before committing, with `python tests/run.py`.
 
 ---
 

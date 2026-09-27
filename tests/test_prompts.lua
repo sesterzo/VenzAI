@@ -261,6 +261,38 @@ return {
         assert(prompt:find("separates a photograph from a filter", 1, true))
     end },
 
+    { "composition is the one step the instrument still authors", function()
+        -- Rewriting every step as a comparison left composition with no owner:
+        -- the target is explicitly unreliable for geometry, so "no difference
+        -- to report" swallowed the crop. Not one crop key came back in four
+        -- runs, including a frame with the subject hard against one edge.
+        local prompt = Prompts.buildAnalysisPrompt(1, 3, true, nil, nil)
+        assert(prompt:find("THE ONE STEP WHERE YOU ARE THE AUTHOR", 1, true),
+            "composition has to be handed back to the model explicitly")
+        assert(prompt:find('"no difference to report" is not an available answer', 1, true),
+            "silence must not be a way out of the one step that is not measured")
+        assert(prompt:find("Cutting 30-50% of the frame away is an ordinary decision", 1, true),
+            "a crop that never dares to be large is the same as no crop")
+    end },
+
+    { "the example crop is a real crop, and keeps the aspect ratio", function()
+        -- The example used to trim 2% off one side while the instructions
+        -- called a timid trim almost never right. A model imitates what it is
+        -- shown, so the two have to agree.
+        local prompt = Prompts.buildAnalysisPrompt(1, 3, true, nil, nil)
+        local example = prompt:match('requested format(.-)%(the "background"')
+        assert(example, "the example block moved")
+        local left = tonumber(example:match('"CropLeft":%s*([%d%.]+)'))
+        local right = tonumber(example:match('"CropRight":%s*([%d%.]+)'))
+        local top = tonumber(example:match('"CropTop":%s*([%d%.]+)'))
+        local bottom = tonumber(example:match('"CropBottom":%s*([%d%.]+)'))
+        assert(left and right and top and bottom, "the example lost its crop")
+        local width, height = right - left, bottom - top
+        assert(math.abs(width - height) < 0.005,
+            string.format("the example crop changes the aspect ratio: %.2f wide, %.2f tall", width, height))
+        assert(width < 0.8, "an example that trims 2% teaches trimming 2%")
+    end },
+
     { "a measuring pass may undo its own overshoot", function()
         local prompt = Prompts.buildAnalysisPrompt(2, 3, true, "Tint = 8", nil)
         assert(not prompt:find("do NOT undo what already works well", 1, true),
