@@ -42,6 +42,15 @@ M.VALID_KEYS = {
     Blacks2012 = true, Contrast2012 = true, Texture = true, Clarity2012 = true, Dehaze = true,
     -- Base color
     Temperature = true, Tint = true, Vibrance = true, Saturation = true,
+
+    -- Camera calibration. These act on the primaries, before everything else,
+    -- which is why they reach a colour character the HSL mixer cannot: HSL
+    -- moves colours that are already there, and this changes how the file
+    -- reads them in the first place. Seven sliders the plug-in never offered.
+    ShadowTint = true,
+    RedHue = true, RedSaturation = true,
+    GreenHue = true, GreenSaturation = true,
+    BlueHue = true, BlueSaturation = true,
     -- Parametric tone curve (scalar sliders, unlike the point curve which is
     -- an array of coordinates and therefore outside this numeric vocabulary)
     ParametricShadows = true, ParametricDarks = true, ParametricLights = true, ParametricHighlights = true,
@@ -88,11 +97,11 @@ local BOOLEAN_VALID_KEYS = {
 -- exactly like "the model chose not to change the profile" while actually
 -- being a typo. Validating against a fixed list turns that into a log line.
 M.STRING_VALID_KEYS = {
-    CameraProfile = {
-        ["Adobe Color"] = true, ["Adobe Landscape"] = true, ["Adobe Portrait"] = true,
-        ["Adobe Neutral"] = true, ["Adobe Standard"] = true, ["Adobe Vivid"] = true,
-        ["Adobe Monochrome"] = true,
-    },
+    -- CameraProfile used to be here. 53 attempts in the log, 53 failures,
+    -- every Adobe profile name, and the photograph answered "Adobe Standard"
+    -- every single time: applyDevelopSettings does not honour it. A control
+    -- that has never once worked is noise in the prompt and noise in the log,
+    -- so it is no longer offered.
 }
 
 local RANGES = {
@@ -102,6 +111,10 @@ local RANGES = {
     Contrast2012 = { -100, 100 }, Texture = { -100, 100 },
     Clarity2012 = { -100, 100 }, Dehaze = { -100, 100 },
     Temperature = { 2000, 50000 }, Tint = { -150, 150 },
+    ShadowTint = { -100, 100 },
+    RedHue = { -100, 100 }, RedSaturation = { -100, 100 },
+    GreenHue = { -100, 100 }, GreenSaturation = { -100, 100 },
+    BlueHue = { -100, 100 }, BlueSaturation = { -100, 100 },
     Vibrance = { -100, 100 }, Saturation = { -100, 100 },
     ParametricShadows = { -100, 100 }, ParametricDarks = { -100, 100 },
     ParametricLights = { -100, 100 }, ParametricHighlights = { -100, 100 },
@@ -178,12 +191,132 @@ M.MASK_SUBJECT_TYPES = {
 -- Extracts and validates the develop settings from the model's JSON response.
 -- CropLeft/Top/Right/Bottom and CropAngle remain RELATIVE to the frame seen in
 -- this pass: composing them with previous passes happens outside this function.
+--------------------------------------------------------------------------------
+-- Lightroom's own names
+--------------------------------------------------------------------------------
+
+-- Colour grading is stored under two generations of names at once, and reading
+-- back what a photograph reports is the only way to find out which is which:
+--
+--   ColorGradeMidtone*, ColorGradeGlobal*, ColorGradeShadowLum,
+--   ColorGradeHighlightLum, ColorGradeBlending   -> the new names, correct
+--   the HUE and SATURATION of shadows and highlights -> still the legacy
+--   split-toning names, because that is where those two wheels came from
+--
+-- We wrote ColorGradeShadowHue, which does not exist, so the model's warm
+-- highlight grading vanished on every pass of every run - and a golden light
+-- is exactly what lives in those four values.
+--
+-- The vocabulary the prompt documents does not change: the translation happens
+-- at the two boundaries that touch Lightroom, and nothing upstream needs to
+-- know there were ever two spellings.
+local TO_LIGHTROOM = {
+    ColorGradeShadowHue = "SplitToningShadowHue",
+    ColorGradeShadowSat = "SplitToningShadowSaturation",
+    ColorGradeHighlightHue = "SplitToningHighlightHue",
+    ColorGradeHighlightSat = "SplitToningHighlightSaturation",
+}
+
+local FROM_LIGHTROOM = {}
+for ours, theirs in pairs(TO_LIGHTROOM) do
+    FROM_LIGHTROOM[theirs] = ours
+end
+
+-- Our vocabulary -> what applyDevelopSettings expects.
+function M.toLightroomSettings(settings)
+    local out = {}
+    for key, value in pairs(settings or {}) do
+        out[TO_LIGHTROOM[key] or key] = value
+    end
+    return out
+end
+
+-- What the photograph reports -> our vocabulary.
+function M.fromLightroomSettings(settings)
+    local out = {}
+    for key, value in pairs(settings or {}) do
+        out[FROM_LIGHTROOM[key] or key] = value
+    end
+    return out
+end
+
+--------------------------------------------------------------------------------
+-- The point tone curve
+--------------------------------------------------------------------------------
+
+-- Lightroom stores a curve as a FLAT list of alternating x and y values on a
+-- 0-255 grid. A probe on a real photograph answered {0, 0, 255, 255} - the two
+-- corners, which is the identity. This is the only value in the whole
+-- vocabulary that is not a single number, and it is where a photograph gets a
+-- character the four parametric sliders cannot reach.
+M.CURVE_KEYS = {
+    ToneCurvePV2012 = true,
+    ToneCurvePV2012Red = true,
+    ToneCurvePV2012Green = true,
+    ToneCurvePV2012Blue = true,
+}
+
+-- More than this is not a curve any more, it is a drawing - and a model that
+-- returns fifty points has misunderstood the question.
+M.MAX_CURVE_POINTS = 16
+
+-- Returns the curve, or nil and the reason. Everything here is a rule
+-- Lightroom itself enforces in its own UI: the curve spans the whole tonal
+-- range, x climbs, and every value sits on the grid. A malformed curve is
+-- discarded rather than repaired, because guessing at what the model meant is
+-- how a photograph gets a shape nobody chose.
+function M.validateCurve(values)
+    if type(values) ~= "table" then return nil, "not a list" end
+
+    local count = #values
+    if count % 2 ~= 0 then return nil, "an odd number of values: a point needs an x and a y" end
+
+    local points = count / 2
+    if points < 2 then return nil, "fewer than two points" end
+    if points > M.MAX_CURVE_POINTS then
+        return nil, string.format("%d points, more than the %d allowed", points, M.MAX_CURVE_POINTS)
+    end
+
+    local previousX
+    for i = 1, count, 2 do
+        local x, y = values[i], values[i + 1]
+        if type(x) ~= "number" or type(y) ~= "number" then return nil, "a value is not a number" end
+        if x < 0 or x > 255 or y < 0 or y > 255 then return nil, "a value is outside 0-255" end
+        if previousX and x <= previousX then return nil, "x does not climb: the curve doubles back" end
+        previousX = x
+    end
+
+    if values[1] ~= 0 then return nil, "does not start at x=0" end
+    if values[count - 1] ~= 255 then return nil, "does not end at x=255" end
+
+    return values
+end
+
 function M.parseModelSettings(text, currentlyGrayscale)
     local developSettings = {}
     for key, val in text:gmatch('"([%w_]+)"%s*:%s*(%-?%d+%.?%d*)') do
         if M.VALID_KEYS[key] then
             developSettings[key] = tonumber(val)
             log("Extracted parameter: " .. key .. " = " .. tostring(val))
+        end
+    end
+
+    -- Curves need their own pass too: the value is a JSON array, and the
+    -- numeric pattern above stops at the first non-digit so it never sees one.
+    for key, body in text:gmatch('"([%w_]+)"%s*:%s*%[([^%]]*)%]') do
+        if M.CURVE_KEYS[key] then
+            local values = {}
+            for number in body:gmatch("%-?%d+%.?%d*") do
+                table.insert(values, tonumber(number))
+            end
+
+            local curve, why = M.validateCurve(values)
+            if curve then
+                developSettings[key] = curve
+                log(string.format("Extracted curve: %s with %d point(s)", key, #curve / 2))
+            else
+                log(string.format("%s discarded: %s.", key, tostring(why)))
+            end
         end
     end
 
@@ -485,6 +618,16 @@ function M.settingsNotKept(asked, actual)
         if type(wanted) == "number" and type(got) == "number" then
             local scale = math.max(1, math.abs(wanted))
             same = math.abs(wanted - got) <= FLOAT_TOLERANCE * scale
+        elseif type(wanted) == "table" and type(got) == "table" then
+            -- A curve. Two tables are never == in Lua even when they hold the
+            -- same numbers, so comparing them by identity would report every
+            -- curve as refused.
+            same = #wanted == #got
+            if same then
+                for i = 1, #wanted do
+                    if wanted[i] ~= got[i] then same = false break end
+                end
+            end
         else
             same = (wanted == got)
         end

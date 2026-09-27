@@ -3,6 +3,114 @@ local Parse = require 'VenzAIParse'
 
 return {
     --------------------------------------------------------------------------
+    -- Camera calibration
+    --------------------------------------------------------------------------
+    -- Seven sliders the plug-in never offered. They act on the primaries,
+    -- before everything else, which is why they give a colour character the
+    -- HSL mixer cannot reach: HSL moves colours that are already there, the
+    -- calibration changes how the file reads them in the first place.
+    { "the calibration sliders are part of the vocabulary", function()
+        for _, key in ipairs({ "ShadowTint", "RedHue", "RedSaturation",
+                               "GreenHue", "GreenSaturation",
+                               "BlueHue", "BlueSaturation" }) do
+            assert(Parse.VALID_KEYS[key], key .. " is not managed")
+            local range = Parse.rangeFor(key)
+            assert(range, key .. " has no range, so a sum could not be clamped")
+            assert(range[1] == -100 and range[2] == 100,
+                key .. " has the wrong range: " .. range[1] .. ".." .. range[2])
+        end
+    end },
+
+    { "a calibration answer survives the parser", function()
+        local s = Parse.parseModelSettings(
+            '{"BlueHue": -8, "BlueSaturation": 12, "ShadowTint": -4, "Exposure2012": 0.2}', false)
+        assert(s.BlueHue == -8 and s.BlueSaturation == 12 and s.ShadowTint == -4)
+        assert(s.Exposure2012 == 0.2)
+    end },
+
+    { "calibration values are movements like every other amount", function()
+        local Delta = require 'VenzAIDelta'
+        assert(Delta.isDelta("BlueHue"), "a calibration hue is an amount, not a position")
+        local after = Delta.apply({ BlueHue = -5 }, { BlueHue = -3 })
+        assert(after.BlueHue == -8, "got " .. tostring(after.BlueHue))
+    end },
+
+    --------------------------------------------------------------------------
+    -- Lightroom's own names for colour grading
+    --------------------------------------------------------------------------
+    -- Found by reading back what the photograph reports: Lightroom kept the
+    -- legacy split-toning names for the HUE and SATURATION of shadows and
+    -- highlights, and uses the new ColorGrade* names only for the midtones, the
+    -- global wheel, and the three luminances. We were writing
+    -- ColorGradeShadowHue, which does not exist, so three passes out of three
+    -- the warm highlight grading the model asked for never reached the photo -
+    -- and that grading is where a golden light lives.
+    { "the four legacy names are translated on the way out", function()
+        local out = Parse.toLightroomSettings({
+            ColorGradeShadowHue = 220, ColorGradeShadowSat = 14,
+            ColorGradeHighlightHue = 45, ColorGradeHighlightSat = 16,
+        })
+        assert(out.SplitToningShadowHue == 220, "got " .. tostring(out.SplitToningShadowHue))
+        assert(out.SplitToningShadowSaturation == 14)
+        assert(out.SplitToningHighlightHue == 45)
+        assert(out.SplitToningHighlightSaturation == 16)
+        assert(out.ColorGradeShadowHue == nil, "the name that does not exist must not survive")
+    end },
+
+    { "the names that ARE right are left alone", function()
+        local out = Parse.toLightroomSettings({
+            ColorGradeMidtoneHue = 30, ColorGradeGlobalSat = 5,
+            ColorGradeShadowLum = -6, ColorGradeHighlightLum = 6,
+            ColorGradeBlending = 80, Exposure2012 = 0.3,
+        })
+        for key, value in pairs({ ColorGradeMidtoneHue = 30, ColorGradeGlobalSat = 5,
+                                  ColorGradeShadowLum = -6, ColorGradeHighlightLum = 6,
+                                  ColorGradeBlending = 80, Exposure2012 = 0.3 }) do
+            assert(out[key] == value, key .. " was mangled: " .. tostring(out[key]))
+        end
+    end },
+
+    { "reading back translates the other way", function()
+        -- The photograph answers in Lightroom's names; everything upstream -
+        -- the delta state, the block shown to the model, the did-NOT-take
+        -- check - speaks the vocabulary the prompt documents.
+        local ours = Parse.fromLightroomSettings({
+            SplitToningHighlightHue = 45, SplitToningHighlightSaturation = 16,
+            ColorGradeMidtoneHue = 30, Exposure2012 = 0.3,
+        })
+        assert(ours.ColorGradeHighlightHue == 45, "got " .. tostring(ours.ColorGradeHighlightHue))
+        assert(ours.ColorGradeHighlightSat == 16)
+        assert(ours.ColorGradeMidtoneHue == 30)
+        assert(ours.Exposure2012 == 0.3)
+        assert(ours.SplitToningHighlightHue == nil, "the storage name must not leak upstream")
+    end },
+
+    { "a round trip changes nothing", function()
+        local mine = { ColorGradeShadowHue = 210, ColorGradeHighlightSat = 12,
+                       ColorGradeMidtoneLum = 4, Contrast2012 = 15 }
+        local back = Parse.fromLightroomSettings(Parse.toLightroomSettings(mine))
+        for key, value in pairs(mine) do
+            assert(back[key] == value, key .. ": " .. tostring(back[key]))
+        end
+    end },
+
+    --------------------------------------------------------------------------
+    -- CameraProfile is gone
+    --------------------------------------------------------------------------
+    -- 53 attempts in the log, 53 failures, every Adobe profile name: the photo
+    -- answered "Adobe Standard" every time. applyDevelopSettings does not
+    -- honour it. A control that has never once worked is noise in the prompt
+    -- and noise in the log.
+    { "CameraProfile is no longer part of the vocabulary", function()
+        assert(not Parse.VALID_KEYS.CameraProfile, "it is still a numeric key")
+        assert(not (Parse.STRING_VALID_KEYS or {}).CameraProfile,
+            "it is still a string key")
+        local s = Parse.parseModelSettings('{"CameraProfile": "Adobe Vivid", "Exposure2012": 0.4}', false)
+        assert(s.CameraProfile == nil, "it survived the parser")
+        assert(s.Exposure2012 == 0.4, "its neighbour must be unharmed")
+    end },
+
+    --------------------------------------------------------------------------
     -- What Lightroom actually kept
     --------------------------------------------------------------------------
     -- The log used to say only "global parameters applied", which means "the
@@ -84,11 +192,17 @@ return {
         assert(s.ConvertToGrayscale == true)
     end },
 
-    { "a CameraProfile outside the closed list is discarded", function()
-        local ok = Parse.parseModelSettings('{"CameraProfile": "Adobe Color", "Exposure2012": 0.1}', false)
-        assert(ok.CameraProfile == "Adobe Color")
-        local bad = Parse.parseModelSettings('{"CameraProfile": "Adobe Colour", "Exposure2012": 0.1}', false)
-        assert(bad.CameraProfile == nil, "a typo must not be written through")
+    { "a CameraProfile is ignored whatever it says", function()
+        -- It was a closed list of profile names until the log showed 53
+        -- attempts and 53 failures: applyDevelopSettings never honoured any of
+        -- them. The key is gone rather than validated, so a model that sends
+        -- one anyway is simply not listened to.
+        for _, name in ipairs({ "Adobe Vivid", "Adobe Color", "Nonsense Profile" }) do
+            local s = Parse.parseModelSettings(
+                '{"CameraProfile": "' .. name .. '", "Exposure2012": 0.5}', false)
+            assert(s.CameraProfile == nil, name .. " survived")
+            assert(s.Exposure2012 == 0.5, "its neighbour must be unharmed")
+        end
     end },
 
     { "the grey mixer is dropped on a colour photo and kept on a B&W one", function()

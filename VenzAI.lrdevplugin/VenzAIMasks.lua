@@ -40,7 +40,15 @@ local M = {}
 -- calling it again with this pass's numbers correctly REPLACES the previous
 -- correction, consistent with how the global settings behave.
 
-local MASK_DETECT_ATTEMPTS = 14
+-- 14 attempts at half a second was 7 seconds, and the log shows the people
+-- detector missing a walking figure inside it on a 7600px raw. 30 attempts was
+-- 15 seconds, and a 8050x5448 coastline lost its 'landscape' mask to it on
+-- both passes that asked for one: seven local corrections - the whole treatment
+-- of the ground - silently never written, on a photograph where the sky mask
+-- next to it had arrived in four seconds. The wait costs nothing when the mask
+-- appears quickly, because the loop stops as soon as it does; it only costs on
+-- the failure it is there to avoid.
+local MASK_DETECT_ATTEMPTS = 90
 local MASK_DETECT_INTERVAL = 0.5
 
 -- True when this Lightroom version exposes the masking API at all. The
@@ -201,6 +209,18 @@ function M.applyMasksToPhoto(photo, masks, maskIDsByType)
                 if not maskID then
                     log(string.format("Mask '%s' was not detected within the timeout (%.0fs), skipping.",
                         mask.type, MASK_DETECT_ATTEMPTS * MASK_DETECT_INTERVAL))
+                    -- Which of the two it was is not guessable from here, and
+                    -- the difference decides the fix: a mask Lightroom never
+                    -- built (this region is not in this photograph) is not the
+                    -- same failure as one it built while we were looking for
+                    -- it under another ID. So count them and let the log say.
+                    local before, after = 0, 0
+                    for _ in pairs(idsBefore) do before = before + 1 end
+                    for _ in pairs(currentMaskIDs()) do after = after + 1 end
+                    log(string.format("Mask '%s': the photo carried %d mask(s) before the " ..
+                        "request and carries %d now - %s.", mask.type, before, after,
+                        after > before and "one WAS created and we failed to recognise it"
+                                        or "none was created"))
                 else
                     maskIDsByType[mask.type] = maskID
                     log(string.format("Mask '%s': created (%s).", mask.type, maskID))

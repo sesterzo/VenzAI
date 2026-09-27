@@ -31,6 +31,7 @@ local Settings = require 'VenzAISettings'
 local Registry = require 'VenzAIProviderRegistry'
 local Contract = require 'VenzAIProviderContract'
 local Messages = require 'VenzAIMessages'
+local Work = require 'VenzAIWorkFolder'
 
 local log = VenzAILog.scoped("Settings")
 
@@ -226,17 +227,8 @@ function detectModelsAction(propertyTable, driver, field)
     end)
 end
 
--- Where VenzAIProcess keeps the JPEG it sends to the provider and the
--- reference image that comes back. Built the same way the engine builds it -
--- VenzAIProcess is a menu script, not a module this file can require - and kept
--- beside the log button because it answers the same question: where do I go to
--- see what actually happened.
-local function workFolderPath()
-    return LrPathUtils.child(LrPathUtils.getStandardFilePath('temp'), "VenzAI")
-end
-
 local function showWorkFolderAction()
-    local folder = workFolderPath()
+    local folder = Work.path()
 
     if not LrFileUtils.exists(folder) then
         LrDialogs.message(
@@ -252,6 +244,38 @@ end
 -- Opens the folder LrLogger writes into, in Explorer or the Finder. The log no
 -- longer sits next to the plug-in, so without this the user has no realistic way
 -- to find it.
+-- Everything in the folder is ours and disposable: the exported JPEG of a run
+-- and the reference images it produced. Reported rather than silent, because a
+-- file that will not go is one still open somewhere, and knowing that is the
+-- difference between a puzzle and a shrug.
+local function cleanWorkFolderAction()
+    local folder = Work.path()
+
+    if not LrFileUtils.exists(folder) then
+        LrDialogs.message(
+            LOC "$$$/VenzAI/Settings/Work/NotFoundTitle=Nothing to show yet",
+            LOC("$$$/VenzAI/Settings/Work/NotFoundBody=VenzAI creates this folder the first time it runs:\n\n^1", folder),
+            "info")
+        return
+    end
+
+    local removed, failed = Work.clean()
+    log(string.format("User emptied the working folder: %d removed, %d refused.",
+        removed, failed or 0))
+
+    if (failed or 0) > 0 then
+        LrDialogs.message(
+            LOC "$$$/VenzAI/Settings/Work/CleanedTitle=Working folder emptied",
+            LOC("$$$/VenzAI/Settings/Work/CleanedPartly=^1 file(s) removed. ^2 could not be deleted - they are still open, most likely in a preview window.", tostring(removed), tostring(failed)),
+            "warning")
+    else
+        LrDialogs.message(
+            LOC "$$$/VenzAI/Settings/Work/CleanedTitle=Working folder emptied",
+            LOC("$$$/VenzAI/Settings/Work/CleanedAll=^1 file(s) removed.", tostring(removed)),
+            "info")
+    end
+end
+
 local function showLogAction()
     local folder = VenzAILog.logFolderPath()
     local file = VenzAILog.logFilePath()
@@ -390,6 +414,10 @@ local function sectionsForTopOfDialog(f, propertyTable)
         f:push_button {
             title = LOC "$$$/VenzAI/Settings/Work/ShowButton=Show working folder",
             action = showWorkFolderAction,
+        },
+        f:push_button {
+            title = LOC "$$$/VenzAI/Settings/Work/CleanButton=Empty it",
+            action = cleanWorkFolderAction,
         },
         f:checkbox {
             value = bind "showReference",

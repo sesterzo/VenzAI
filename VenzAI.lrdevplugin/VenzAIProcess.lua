@@ -40,6 +40,7 @@ local Contract = require 'VenzAIProviderContract'
 local Messages = require 'VenzAIMessages'
 local Prompts = require 'VenzAIPrompts'
 local Parse = require 'VenzAIParse'
+local Work = require 'VenzAIWorkFolder'
 local Delta = require 'VenzAIDelta'
 local Masks = require 'VenzAIMasks'
 
@@ -50,31 +51,10 @@ local log = VenzAILog.log
 -- Program Files; in both cases the bundle is effectively read-only once
 -- installed, and writing there fails silently. LrPathUtils resolves the
 -- right per-platform location with no conditional code.
-local WORK_DIR = LrPathUtils.child(LrPathUtils.getStandardFilePath('temp'), "VenzAI")
--- Named after what it is, not after the model that made it: any provider
--- declaring generateReference writes here.
-local REFERENCE_IMAGE_BASE_PATH = LrPathUtils.child(WORK_DIR, "venzai_reference")
-
--- VenzAIProcess is a script the menu runs, not a module anyone requires, so the
--- settings panel cannot ask it anything. The path is short and derived from two
--- SDK calls, so the panel rebuilds it the same way rather than this file
--- growing an export nothing else could use.
-
--- VenzAIProcess is a script the menu runs, not a module anyone requires, so the
--- settings panel cannot ask it anything. The path is short and derived from two
--- SDK calls, so the panel rebuilds it the same way rather than this file
--- growing an export nothing else could use.
-
-local function ensureWorkDir()
-    if not LrFileUtils.exists(WORK_DIR) then
-        local ok, err = pcall(function() LrFileUtils.createAllDirectories(WORK_DIR) end)
-        if not ok then
-            log("Could not create the working directory " .. WORK_DIR .. ": " .. tostring(err))
-            return false
-        end
-    end
-    return true
-end
+-- The folder, its naming and its housekeeping live in VenzAIWorkFolder: the
+-- settings panel needs them too, and it cannot require this file - this is the
+-- script Lightroom runs when the menu item is chosen.
+local WORK_DIR = Work.path()
 
 -- Reports a fatal condition to the user instead of only to the log. Every
 -- early return in the run below used to be silent: from the user's side
@@ -89,18 +69,27 @@ end
 -- run. Best effort only: the image is held in memory for the rest of the run,
 -- so a failed write costs nothing but a file to look at afterwards.
 local function saveReferenceToWorkDir(image)
-    if not ensureWorkDir() then return end
-    local extension = image.mimeType and image.mimeType:match("image/(%w+)") or "png"
-    local path = REFERENCE_IMAGE_BASE_PATH .. "." .. extension
-    local file = io.open(path, "wb")
+    if not Work.ensure() then return end
+
+    -- A name of its own for every reference. They used to share one, which was
+    -- fine until the diagnostics view displayed the file: Lightroom kept the
+    -- handle open, the next run could not overwrite it, and the feature meant
+    -- to let you see the reference was what stopped it being saved.
+    local extension = image.mimeType and image.mimeType:match("image/(%w+)")
+    local path = Work.referencePath(extension)
+
+    local file, why = io.open(path, "wb")
     if not file then
-        log("Could not write the reference image to " .. path ..
-            " (continuing, it is kept in memory for this run).")
+        log("Could not write the reference image to " .. path .. ": " .. tostring(why))
         return
     end
     file:write(LrStringUtils.decodeBase64(image.data))
     file:close()
     log("Reference saved to: " .. path)
+
+    -- Keeping them means keeping only a few.
+    Work.prune()
+
     return path
 end
 
@@ -152,7 +141,7 @@ end
 -- than the temp root, so a leftover file after a crash is identifiable and
 -- cannot collide with another plug-in's export of the same filename.
 local function exportCurrentPhoto(photo)
-    if not ensureWorkDir() then
+    if not Work.ensure() then
         return nil, "could not create the working directory " .. WORK_DIR
     end
 
@@ -301,7 +290,8 @@ LrTasks.startAsyncTask(function()
         tostring(okFormat and fileFormat or "unknown"), temperatureScale))
 
     local absoluteState = {}
-    local okSeed, seeded = LrTasks.pcall(function() return photo:getDevelopSettings() end)
+    local okSeed, seededRaw = LrTasks.pcall(function() return photo:getDevelopSettings() end)
+    local seeded = okSeed and Parse.fromLightroomSettings(seededRaw) or nil
     if okSeed and type(seeded) == "table" then
         for key in pairs(Parse.VALID_KEYS) do
             if type(seeded[key]) == "number" then
@@ -580,14 +570,21 @@ LrTasks.startAsyncTask(function()
         -- movement had nothing to move from and was refused. Switching the
         -- white balance to Custom makes Lightroom fill in the as-shot value,
         -- so the next pass can move it. Done once, only when it is needed.
-        if Delta.needsWhiteBalanceUnlock(report) then
+        -- Carried out below, once the write has given us a Kelvin to read.
+        local refusedTemperature = Delta.refusedTemperatureMove(report)
+        if refusedTemperature then
             absolute.WhiteBalance = "Custom"
-            log(string.format("Pass %d: white balance set to Custom so that the next " ..
-                "pass has a Kelvin value to move from.", pass))
+            log(string.format("Pass %d: white balance set to Custom so that the " ..
+                "refused movement of %+.0f K has something to move from.",
+                pass, refusedTemperature))
         end
 
+        -- Translated on the way out: four of the colour-grading values are
+        -- stored under their legacy split-toning names, and writing the name
+        -- that does not exist is how the model's warm highlight grading
+        -- vanished on every pass of every run.
         catalog:withWriteAccessDo("VenzAI develop (pass " .. pass .. ")", function()
-            photo:applyDevelopSettings(absolute)
+            photo:applyDevelopSettings(Parse.toLightroomSettings(absolute))
         end)
         log(string.format("Pass %d: global parameters applied.", pass))
 
@@ -596,7 +593,8 @@ LrTasks.startAsyncTask(function()
         -- the model never proposed from one Lightroom silently overrode, and
         -- the difference is invisible in the photograph unless you know which
         -- slider to go and look at.
-        local readOk, applied = LrTasks.pcall(function() return photo:getDevelopSettings() end)
+        local readOk, appliedRaw = LrTasks.pcall(function() return photo:getDevelopSettings() end)
+        local applied = readOk and Parse.fromLightroomSettings(appliedRaw) or appliedRaw
         if not readOk then
             log(string.format("Pass %d: could not read the settings back to check them: %s",
                 pass, tostring(applied)))
@@ -608,6 +606,33 @@ LrTasks.startAsyncTask(function()
             -- using, so on the first pass print the ones it DOES report and let
             -- the log name them, instead of guessing at the spelling.
             if pass == 1 then
+                -- The tone curve and Point Color are documented only as
+                -- "(table)", and writing blind into a table we have never seen
+                -- is the mistake that cost five attempts on the image upload.
+                -- So: print the shape once, and design from what comes back.
+                for _, key in ipairs({ "ToneCurvePV2012", "ToneCurvePV2012Red",
+                                       "PointColors", "ToneCurveName2012" }) do
+                    local value = applied[key]
+                    if value == nil then
+                        log(string.format("Shape probe: %s is absent.", key))
+                    elseif type(value) ~= "table" then
+                        log(string.format("Shape probe: %s is a %s = %s",
+                            key, type(value), tostring(value)))
+                    else
+                        local count = 0
+                        local sample = {}
+                        for k, v in pairs(value) do
+                            count = count + 1
+                            if count <= 12 then
+                                table.insert(sample, string.format("[%s]=%s(%s)",
+                                    tostring(k), tostring(v), type(v)))
+                            end
+                        end
+                        log(string.format("Shape probe: %s is a table, %d entr(y/ies), #=%d: %s",
+                            key, count, #value, table.concat(sample, " ")))
+                    end
+                end
+
                 local seen = {}
                 for key in pairs(applied) do
                     if key:find("ColorGrade") or key:find("SplitToning") then
@@ -627,6 +652,34 @@ LrTasks.startAsyncTask(function()
             -- and what we asked Lightroom for is the sum. Comparing a movement
             -- against what the photo reports would call every applied value a
             -- failure.
+            -- The white balance was just unlocked, so the Kelvin the movement
+            -- had nothing to move from now exists: make the movement here
+            -- rather than losing it. Delta.apply does the arithmetic and the
+            -- clamping, so the resumed movement obeys the same rules as any
+            -- other - it is the same movement, only a moment later.
+            if refusedTemperature and type(applied.Temperature) == "number" then
+                local resumed, resumedReport = Delta.apply(
+                    { Temperature = applied.Temperature },
+                    { Temperature = refusedTemperature }, temperatureScale)
+                local outcome = resumedReport[1] and resumedReport[1].outcome
+                if outcome == "unknown_scale" then
+                    log(string.format("Pass %d: the white balance is unlocked but still " ..
+                        "reports no Kelvin; the movement of %+.0f K is lost.",
+                        pass, refusedTemperature))
+                else
+                    local unlockedAt = applied.Temperature
+                    absoluteState.Temperature = resumed.Temperature
+                    applied.Temperature = resumed.Temperature
+                    absolute.Temperature = resumed.Temperature
+                    catalog:withWriteAccessDo("VenzAI temperature (pass " .. pass .. ")", function()
+                        photo:applyDevelopSettings({ Temperature = resumed.Temperature })
+                    end)
+                    log(string.format("Pass %d: white balance unlocked at %.0f K; the " ..
+                        "refused movement of %+.0f K applied, now %.0f K.",
+                        pass, unlockedAt, refusedTemperature, resumed.Temperature))
+                end
+            end
+
             local missed = Parse.settingsNotKept(absolute, applied)
             if #missed == 0 then
                 log(string.format("Pass %d: every requested setting was kept.", pass))

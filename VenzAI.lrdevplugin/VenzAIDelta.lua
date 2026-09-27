@@ -47,6 +47,26 @@ M.ABSOLUTE_KEYS = {
     local_Amount = true,
     local_RefineSaturation = true,
 
+    -- A curve is a SHAPE. The model sends the whole curve it wants, and
+    -- adding one curve to another is not an operation that means anything.
+    ToneCurvePV2012 = true, ToneCurvePV2012Red = true,
+    ToneCurvePV2012Green = true, ToneCurvePV2012Blue = true,
+
+    -- The SHAPE of the vignette, not its strength: where it starts reaching
+    -- inward, how soft its edge is, how round it is. Midpoint and Feather sit
+    -- at 50 on an untouched photograph, and accumulating carried a real run to
+    -- Midpoint 95 and Feather 100 - a vignette that never reaches the frame,
+    -- so the darkened corners of the reference simply were not there.
+    -- PostCropVignetteAmount stays a movement: that one IS an amount.
+    PostCropVignetteMidpoint = true, PostCropVignetteFeather = true,
+    PostCropVignetteRoundness = true, PostCropVignetteHighlightContrast = true,
+
+    -- Where the three grading zones meet, not a correction to the photograph:
+    -- 50 is the balanced position and 100 is all-highlights. Accumulated, a
+    -- model asking twice for 70 would have reached 140 and been clamped to
+    -- all-highlights - the opposite of what it asked for the second time.
+    ColorGradeBlending = true,
+
     -- An enumeration, a closed string list, a boolean.
     PostCropVignetteStyle = true,
     CameraProfile = true,
@@ -181,7 +201,20 @@ function M.apply(current, answer, temperatureScale)
             -- CHANGES anything is what convergence needs to know, because the
             -- model returns the crop bounds and the vignette style in nearly
             -- every answer whether or not it wants them different.
-            local outcome = (current[key] == value) and "unchanged" or "absolute"
+            local outcome = "absolute"
+            if current[key] == value then
+                outcome = "unchanged"
+            elseif type(current[key]) == "table" and type(value) == "table"
+                and #current[key] == #value then
+                -- Two curves holding the same numbers are the same curve, and
+                -- == would say otherwise. Convergence depends on telling "the
+                -- same curve again" from "a new one".
+                local identical = true
+                for i = 1, #value do
+                    if current[key][i] ~= value[i] then identical = false break end
+                end
+                if identical then outcome = "unchanged" end
+            end
             absolute[key] = value
             table.insert(report, { key = key, asked = value, from = current[key],
                                    to = value, outcome = outcome })
@@ -212,7 +245,23 @@ function M.apply(current, answer, temperatureScale)
                 -- Handled above; fall through without writing anything.
             else
 
-            if isImplausible(range, value) then
+            if range == TEMPERATURE_KELVIN_RANGE and isImplausible(range, value)
+                and value >= range[1] then
+                -- A number that can only be an absolute temperature IS one.
+                -- Dropping it served nobody: the log showed a run cool the
+                -- photograph by 500 K, notice, ask for 6150 to climb back, and
+                -- be refused - ending colder than it started while the target
+                -- was warmer. The intent was unambiguous, so it is honoured.
+                log(string.format("Temperature: %s can only be an absolute, " ..
+                    "so it is read as the temperature to go to rather than a movement.",
+                    tostring(value)))
+                local target = value
+                if target > range[2] then target = range[2] end
+                absolute[key] = target
+                table.insert(report, { key = key, asked = value, from = from,
+                                       to = target, outcome = "absolute" })
+
+            elseif isImplausible(range, value) then
                 log(string.format("%s: %s is larger than the whole range; " ..
                     "the model answered an absolute, not a movement. Dropped.",
                     key, tostring(value)))
@@ -276,12 +325,22 @@ end
 --
 -- The engine, not this module, does the setting: it owns the write.
 function M.needsWhiteBalanceUnlock(report)
+    return M.refusedTemperatureMove(report) ~= nil
+end
+
+-- The movement that was refused, so the caller can carry it out once the
+-- unlock has given the photograph a Kelvin value. Without this the first
+-- Temperature the model ever asks for is silently thrown away on every raw
+-- that is still at "As Shot", and the pass that follows sees a white balance
+-- nobody moved and leaves it alone: the run ends with the one correction the
+-- model asked for first never made.
+function M.refusedTemperatureMove(report)
     for _, row in ipairs(report or {}) do
         if row.key == "Temperature" and row.outcome == "unknown_scale" then
-            return true
+            return row.asked
         end
     end
-    return false
+    return nil
 end
 
 --------------------------------------------------------------------------------

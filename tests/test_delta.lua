@@ -3,6 +3,39 @@ local Delta = require 'VenzAIDelta'
 local Parse = require 'VenzAIParse'
 
 return {
+    { "an absolute Kelvin is read as a target, not thrown away", function()
+        -- What the log showed: the model cooled the photograph by 500 K, saw
+        -- the mistake, and asked for 6150 - an absolute. The guard dropped it,
+        -- so the correction never happened and the run ended colder than it
+        -- started while the reference was warmer. The intent was unambiguous;
+        -- refusing it served nobody. A number that can only be an absolute
+        -- temperature is now taken as the temperature to go to.
+        local absolute, report = Delta.apply({ Temperature = 5900 },
+                                             { Temperature = 6150 }, "kelvin")
+        assert(absolute.Temperature == 6150,
+            "the target was not honoured: " .. tostring(absolute.Temperature))
+        local row
+        for _, r in ipairs(report) do if r.key == "Temperature" then row = r end end
+        assert(row.outcome == "absolute", "got " .. row.outcome)
+    end },
+
+    { "a movement is still a movement", function()
+        local absolute = Delta.apply({ Temperature = 5900 }, { Temperature = 300 }, "kelvin")
+        assert(absolute.Temperature == 6200, "got " .. tostring(absolute.Temperature))
+    end },
+
+    { "an absolute target still cannot leave the valid range", function()
+        local absolute = Delta.apply({ Temperature = 5900 }, { Temperature = 90000 }, "kelvin")
+        assert(absolute.Temperature == 50000, "got " .. tostring(absolute.Temperature))
+    end },
+
+    { "on the relative scale nothing is read as a target", function()
+        -- There every plausible movement is also a plausible absolute, so the
+        -- two cannot be told apart and the movement reading stands.
+        local absolute = Delta.apply({ Temperature = 20 }, { Temperature = 30 }, "relative")
+        assert(absolute.Temperature == 50, "got " .. tostring(absolute.Temperature))
+    end },
+
     { "an amount is a delta", function()
         for _, key in ipairs({ "Exposure2012", "Contrast2012", "Vibrance",
                                "Temperature", "Tint", "GrainAmount",
@@ -11,6 +44,42 @@ return {
                                "local_Exposure", "local_Saturation" }) do
             assert(Delta.isDelta(key), key .. " should be a movement")
         end
+    end },
+
+    { "the shape of the vignette is a position, not a movement", function()
+        for _, key in ipairs({ "PostCropVignetteMidpoint", "PostCropVignetteFeather",
+                               "PostCropVignetteRoundness", "PostCropVignetteHighlightContrast" }) do
+            assert(not Delta.isDelta(key), key .. " must not accumulate")
+        end
+        -- The real run: 50 + 45 became 95, and the vignette never reached the
+        -- frame. PostCropVignetteAmount is the one that IS an amount.
+        local after = Delta.apply({ PostCropVignetteMidpoint = 50, PostCropVignetteFeather = 50 },
+                                  { PostCropVignetteMidpoint = 45, PostCropVignetteFeather = 70 })
+        assert(after.PostCropVignetteMidpoint == 45, "got " .. tostring(after.PostCropVignetteMidpoint))
+        assert(after.PostCropVignetteFeather == 70, "got " .. tostring(after.PostCropVignetteFeather))
+        assert(Delta.isDelta("PostCropVignetteAmount"), "the strength is still a movement")
+    end },
+
+    { "a refused temperature movement is handed back, not just flagged", function()
+        -- Without the amount the caller can unlock the white balance but not
+        -- carry out the movement that needed unlocking.
+        local _, report = Delta.apply({}, { Temperature = 350 }, "kelvin")
+        assert(Delta.needsWhiteBalanceUnlock(report), "the unlock is still needed")
+        assert(Delta.refusedTemperatureMove(report) == 350,
+            "got " .. tostring(Delta.refusedTemperatureMove(report)))
+    end },
+
+    { "nothing is handed back when no movement was refused", function()
+        local _, report = Delta.apply({ Temperature = 5500 }, { Temperature = 350 }, "kelvin")
+        assert(Delta.refusedTemperatureMove(report) == nil, "a movement that worked came back")
+        assert(not Delta.needsWhiteBalanceUnlock(report))
+    end },
+
+    { "the grading blend is a position, not a movement", function()
+        assert(not Delta.isDelta("ColorGradeBlending"),
+            "asking for 70 twice would otherwise reach all-highlights")
+        local after = Delta.apply({ ColorGradeBlending = 50 }, { ColorGradeBlending = 70 })
+        assert(after.ColorGradeBlending == 70, "got " .. tostring(after.ColorGradeBlending))
     end },
 
     { "a position, a name or a state is not a delta", function()
@@ -118,19 +187,25 @@ return {
     end },
 
     { "a movement larger than the whole range is the model reverting to absolutes", function()
-        -- Review Focus 4. Contrast2012 spans 200; a 5400 is not a movement.
+        -- Review Focus 4, rewritten. It used to assert that an absolute
+        -- Temperature was DROPPED. A real run showed what that cost: the model
+        -- cooled a photograph, noticed, asked for 6150 to climb back, and was
+        -- refused - the run ended colder than it started while its target was
+        -- warmer. A number that can only be an absolute temperature is now
+        -- honoured as one. The guard still stands where the two readings are
+        -- genuinely ambiguous, which is every other parameter.
         local absolute, report = Delta.apply({ Temperature = 5200 }, {
             Temperature = 5400,
             Contrast2012 = 15,
-        })
-        assert(absolute.Temperature == 5200,
-            "the implausible delta must not be added: " .. tostring(absolute.Temperature))
+        }, "kelvin")
+        assert(absolute.Temperature == 5400,
+            "the target should be honoured: " .. tostring(absolute.Temperature))
         assert(absolute.Contrast2012 == 15, "the rest of the answer must still apply")
-        local found
-        for _, row in ipairs(report) do
-            if row.key == "Temperature" then found = row end
-        end
-        assert(found and found.outcome == "implausible", "it must be named in the report")
+
+        -- A parameter where an absolute and a movement cannot be told apart is
+        -- still dropped when the number is impossible as a movement.
+        local other = Delta.apply({ Contrast2012 = 10 }, { Contrast2012 = 500 })
+        assert(other.Contrast2012 == 10, "got " .. tostring(other.Contrast2012))
     end },
 
     { "Temperature on a JPEG uses the -100..100 scale", function()

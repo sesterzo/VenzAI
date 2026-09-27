@@ -73,13 +73,16 @@ return {
         assert(absolute.Sharpness == 20, "got " .. tostring(absolute.Sharpness))
     end },
 
-    { "an absolute the model sends by habit is still rejected", function()
-        -- The guard the discard loop was written for must survive the change:
-        -- it moved from the parser to the accumulator, it did not disappear.
+    { "an absolute Temperature travels the whole route and is honoured", function()
+        -- Written when an absolute was dropped. A real run showed the cost: the
+        -- model cooled the photograph, noticed, asked for the temperature it
+        -- wanted, and was refused. It is now read as a target - and the parser
+        -- still has to let it through for the accumulator to see it at all.
         local settings = Parse.parseModelSettings('{ "Temperature": 5400 }', false)
-        local absolute = Delta.apply({ Temperature = 5200 }, settings)
-        assert(absolute.Temperature == 5200,
-            "an absolute was added as a movement: " .. tostring(absolute.Temperature))
+        assert(settings.Temperature == 5400, "the parser swallowed it")
+        local absolute = Delta.apply({ Temperature = 5200 }, settings, "kelvin")
+        assert(absolute.Temperature == 5400,
+            "the target was not honoured: " .. tostring(absolute.Temperature))
     end },
 
     { "an answer whose every value is rejected is NOT an arrival", function()

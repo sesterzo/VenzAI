@@ -6,6 +6,21 @@ local function fakePhoto(settings)
 end
 
 return {
+    { "the model is told its own neutral is not a cast", function()
+        -- The defect this pins cost several ruined photographs. A raw arrives
+        -- with Temperature 8100 - the white balance the camera calculated so
+        -- THIS scene renders neutral. The model read 8100 as "very warm" and
+        -- cooled by 1200 K, which does not remove a cast: it adds one. Quoting
+        -- the 2000-50000 range invited exactly that reasoning, so the range is
+        -- gone and the meaning of the number is stated instead.
+        local prompt = Prompts.buildAnalysisPrompt(2, 3, false, "Temperature = 8100", nil)
+        assert(prompt:find("neutral", 1, true), "the word the whole thing turns on is missing")
+        assert(prompt:lower():find("adds a cast", 1, true),
+            "the model must be told which direction the mistake goes")
+        assert(not prompt:find("2000 and 50000", 1, true),
+            "the absolute range invites reasoning from daylight instead of from the file")
+    end },
+
     --------------------------------------------------------------------------
     -- What the masks already carry
     --------------------------------------------------------------------------
@@ -82,7 +97,7 @@ return {
         local required = {
             "Exposure2012", "HueAdjustment", "GrayMixer", "ConvertToGrayscale",
             "CameraProfile", "local_Exposure",
-            "2000", "50000",              -- Temperature stays absolute Kelvin
+            "Kelvin",                     -- the model must know which scale it is on
             "strictly increasing",        -- the parametric split points
             "JSON",
         }

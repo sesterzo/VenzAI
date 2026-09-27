@@ -31,22 +31,23 @@ local M = {}
 -- follow technical instructions more reliably in English, and it's the
 -- language the Lightroom develop settings format is documented in.
 local PARAM_RULES = [[
-Return ONLY a valid JSON object (no markdown fences, no ```json) containing only the keys actually needed, from these categories. Values are numbers, except ConvertToGrayscale which is a JSON boolean and CameraProfile which is a quoted string from a closed list:
+Return ONLY a valid JSON object (no markdown fences, no ```json) containing only the keys actually needed, from these categories. Values are numbers, except ConvertToGrayscale which is a JSON boolean:
 
 GLOBAL TONE: Exposure2012, Highlights2012, Shadows2012, Whites2012, Blacks2012, Contrast2012, Texture, Clarity2012, Dehaze.
 BASE COLOR: Temperature, Tint, Vibrance, Saturation.
+CAMERA CALIBRATION: ShadowTint, RedHue, RedSaturation, GreenHue, GreenSaturation, BlueHue, BlueSaturation.
+POINT TONE CURVE: ToneCurvePV2012, and the three channel curves ToneCurvePV2012Red, ToneCurvePV2012Green, ToneCurvePV2012Blue. These are the one value here that is a LIST rather than a number - see the rules below.
 PARAMETRIC TONE CURVE: ParametricShadows, ParametricDarks, ParametricLights, ParametricHighlights, plus the three region boundaries ParametricShadowSplit, ParametricMidtoneSplit, ParametricHighlightSplit.
 DETAIL: Sharpness, SharpenRadius, SharpenDetail, SharpenEdgeMasking, LuminanceSmoothing, LuminanceNoiseReductionDetail, LuminanceNoiseReductionContrast, ColorNoiseReduction, ColorNoiseReductionDetail, ColorNoiseReductionSmoothness, DefringePurpleAmount, DefringeGreenAmount.
 GRAIN: GrainAmount, GrainSize, GrainFrequency.
 BLACK AND WHITE: ConvertToGrayscale (boolean), GrayMixer<Color> for the same 8 colors.
-COLOR PROFILE: CameraProfile (string, closed list - see below).
 GEOMETRY: CropAngle, CropLeft, CropTop, CropRight, CropBottom.
 POST-CROP VIGNETTE: PostCropVignetteAmount, PostCropVignetteMidpoint, PostCropVignetteFeather, PostCropVignetteRoundness, PostCropVignetteStyle, PostCropVignetteHighlightContrast.
 THREE-WAY COLOR GRADING: ColorGradeShadowHue, ColorGradeShadowSat, ColorGradeShadowLum, ColorGradeMidtoneHue, ColorGradeMidtoneSat, ColorGradeMidtoneLum, ColorGradeHighlightHue, ColorGradeHighlightSat, ColorGradeHighlightLum, ColorGradeGlobalHue, ColorGradeGlobalSat, ColorGradeGlobalLum, ColorGradeBlending.
 SELECTIVE COLOR PER CHANNEL (HSL mixer, one or more of these 8 colors: Red, Orange, Yellow, Green, Aqua, Blue, Purple, Magenta): HueAdjustment<Color>, SaturationAdjustment<Color>, LuminanceAdjustment<Color> (e.g. HueAdjustmentGreen, SaturationAdjustmentBlue, LuminanceAdjustmentOrange).
 
 Rules on ranges and meaning of values (always respect these, they are technical constraints of the Lightroom format):
-- Temperature: on a raw file this is measured in Kelvin, where daylight sits around 4500-7500 and the whole scale runs 2000-50000; on a JPEG it is a -100 to 100 scale instead. The current value is reported to you, so you can see which scale this file uses. Your movement is in the same units: on a raw file, +300 means 300 K warmer.
+- Temperature and Tint: READ THE CURRENT VALUE BEFORE YOU MOVE EITHER. On a raw file they are measured in Kelvin, and the values you are shown are not a cast to be corrected - they are the white balance the camera calculated so that THIS scene renders neutral, and they differ from file to file. A raw whose current Temperature is 8100 is not a warm photograph: 8100 is its neutral. Moving away from that number ADDS a cast rather than removing one, and a movement of 1000 K or more is a deliberate, strong stylistic decision, not a correction. Do not reason from daylight sitting around 5500: that rule is about light, and this number is about a file. On a rendered file (JPEG, TIFF) the scale is -100 to 100 instead, where 0 is that file's neutral and the same logic applies. Your movement is in whichever units the current value is reported in.
 - Tint: -150 to 150.
 - Saturation vs Vibrance: Saturation moves every colour by the same amount, including the ones already vivid and including skin, fur and feathers. Vibrance moves the weaker colours more than the strong ones and largely spares orange, red and yellow. Two different instruments; pick the one whose behaviour you want.
 - Texture vs Clarity: Texture acts on medium-sized detail (positive for fur, feathers, foliage; negative to smooth skin and surfaces) and barely touches colour. Clarity is midtone edge contrast over a wider radius and also moves luminance and saturation. Two different instruments; pick the one whose behaviour you want.
@@ -58,13 +59,17 @@ Rules on ranges and meaning of values (always respect these, they are technical 
 - PostCropVignetteHighlightContrast: 0-100.
 - ColorGrade*Hue: 0-360. ColorGrade*Sat: 0-100. ColorGrade*Lum: -100 to 100. ColorGradeBlending: 0-100.
 - HueAdjustment<Color>, SaturationAdjustment<Color>, LuminanceAdjustment<Color>: -100 to 100 each.
+- CAMERA CALIBRATION: ShadowTint, RedHue, RedSaturation, GreenHue, GreenSaturation, BlueHue, BlueSaturation, -100 to 100 each. These act on the three primaries before any other colour control, so they change how the file renders colour rather than correcting colour that is already rendered. A small move here reaches every part of the frame at once and is what gives a photograph a colour signature; the HSL mixer, by contrast, adjusts one band of colour that is already there. ShadowTint moves the shadows between green and magenta.
 - SharpenRadius: 0.5-3.0. SharpenDetail: 0-100. SharpenEdgeMasking: 0-100.
+- POINT TONE CURVE: a flat JSON list of alternating x and y values on a 0-255 grid, for example [0,0, 64,48, 192,208, 255,255]. x is the input tone, y is what it becomes: a point above the diagonal lightens that tone, below it darkens. The list must start at x=0 and end at x=255, x must always climb, every value must sit between 0 and 255, and there is a limit of 16 points - a curve with fifty points is a drawing, not a decision. [0,0, 255,255] is the straight line, which changes nothing.
+  This is where a photograph gets a character the four parametric sliders cannot reach: the shoulder that holds a highlight, the toe that gives blacks their density, the exact placement of a midtone. Use it when the shape of the tonality IS the decision.
+  ToneCurvePV2012Red, Green and Blue do the same to one channel each, which is how a colour cast is placed into shadows or highlights independently of any grading.
+  A curve is a SHAPE, not a movement: send the whole curve you want, not a change to the one already there. Omit the key to leave it alone.
 - PARAMETRIC TONE CURVE: ParametricShadows, ParametricDarks, ParametricLights, ParametricHighlights are -100 to 100 each and act on four adjoining tonal regions, from darkest to brightest - the tool for shaping tonality region by region rather than moving the whole range. The three split points are 0-100 and define where those regions meet; their defaults are 25, 50 and 75, and moving them moves the boundaries themselves. They MUST stay strictly increasing (ParametricShadowSplit < ParametricMidtoneSplit < ParametricHighlightSplit) - out-of-order splits are discarded.
 - LuminanceNoiseReductionDetail / LuminanceNoiseReductionContrast: 0-100, refine LuminanceSmoothing and do nothing without it. ColorNoiseReductionDetail / ColorNoiseReductionSmoothness: 0-100, likewise refine ColorNoiseReduction.
 - DefringePurpleAmount / DefringeGreenAmount: 0-20, remove purple/green colour fringing on high-contrast edges.
 - GRAIN: GrainAmount 0-100 is the master control and the other two do nothing without it (GrainSize 0-100, GrainFrequency 0-100). Grain is a style decision: it unifies noise in a high-ISO frame and gives a filmic or documentary rendering, and it costs fine resolution.
 - BLACK AND WHITE: ConvertToGrayscale is a JSON boolean (true or false, never a number or a quoted string). GrayMixer<Color> (-100 to 100 for each of the 8 colours) sets how each ORIGINAL colour maps to a grey tone - GrayMixerBlue negative darkens a sky, GrayMixerOrange positive lifts skin or fur - and it applies ONLY when ConvertToGrayscale is true; on a colour photo those values are discarded. In black and white, Vibrance, Saturation and the HSL Saturation/Hue keys do nothing, so do not return them. ColorGrade* still works, as toning.
-- CameraProfile: a string, and ONLY one of exactly these values: "Adobe Color", "Adobe Landscape", "Adobe Portrait", "Adobe Neutral", "Adobe Standard", "Adobe Vivid", "Adobe Monochrome". Anything else is discarded. It sets the starting rendering the rest of your values work on: "Adobe Portrait" renders skin more gently, "Adobe Landscape" pushes colour harder, "Adobe Neutral" gives a flatter base to grade from yourself, "Adobe Monochrome" goes with ConvertToGrayscale = true. Omit the key to keep the photo's current profile.
 
 LOCAL (MASKED) CORRECTIONS - you can select a REGION of the photograph with an automatic AI-detected mask and treat it independently of the rest of the frame. This is where an edit stops being a filter laid over the whole picture: a subject brought forward while the ground falls back, a sky given its own light, a face treated differently from the scene around it, a distracting background pushed down so the eye stays where you want it.
 
@@ -84,8 +89,9 @@ Example of the requested format (names/values are just an example, compute your 
   "Shadows2012": 35,
   "ParametricHighlights": -12,
   "ParametricShadows": 8,
-  "Temperature": 5500,
+  "Temperature": -250,
   "Tint": 5,
+  "ToneCurvePV2012": [0,0, 32,22, 128,134, 255,250],
   "Vibrance": 15,
   "Sharpness": 40,
   "SharpenRadius": 1.0,
@@ -173,7 +179,10 @@ function M.readCurrentSettings(photo)
     -- within a C or metamethod call"), so every pass after the first was told
     -- nothing about what the previous one had applied and re-proposed settings
     -- from scratch. The refinement loop was refining nothing.
-    local ok, settings = LrTasks.pcall(function() return photo:getDevelopSettings() end)
+    local ok, raw = LrTasks.pcall(function() return photo:getDevelopSettings() end)
+    -- Translated into the vocabulary the prompt documents: the model is told
+    -- ColorGradeHighlightHue, so that is what it must read back here too.
+    local settings = ok and Parse.fromLightroomSettings(raw) or raw
     if not ok or type(settings) ~= "table" then
         log("Could not read the current develop settings: " .. tostring(settings))
         return nil, false
@@ -194,6 +203,28 @@ function M.readCurrentSettings(photo)
         local value = settings[key]
         if type(value) == "number" and value ~= 0 then
             table.insert(lines, string.format("%s = %.4g", key, value))
+        end
+    end
+
+    -- The curves are the one value that is a list, so the numeric loop above
+    -- cannot see them - and a curve the model is not shown is a curve it can
+    -- only replace blindly. The identity curve is skipped: a straight line
+    -- changes nothing, and it is not worth a line of prompt.
+    local curveKeys = {}
+    for key in pairs(Parse.CURVE_KEYS) do table.insert(curveKeys, key) end
+    table.sort(curveKeys)
+    for _, key in ipairs(curveKeys) do
+        local curve = settings[key]
+        if type(curve) == "table" and #curve >= 4 then
+            local identity = (#curve == 4 and curve[1] == 0 and curve[2] == 0
+                              and curve[3] == 255 and curve[4] == 255)
+            if not identity then
+                local points = {}
+                for i = 1, #curve, 2 do
+                    table.insert(points, string.format("%d,%d", curve[i], curve[i + 1]))
+                end
+                table.insert(lines, string.format("%s = [%s]", key, table.concat(points, " ")))
+            end
         end
     end
 
@@ -306,7 +337,7 @@ function M.buildAnalysisPrompt(pass, totalPasses, hasReference, currentSettingsB
             .. currentSettingsBlock
             .. [[
 
-Read them as information about where you are, not as something to repeat. They tell you how far each slider has already travelled, and which units Temperature is in on this file.
+Read them as information about where you are, not as something to repeat. They tell you how far each slider has already travelled, and which units Temperature is in on this file. Temperature and Tint are the exception to "how far it has travelled": before any pass has moved them they are this file's own neutral, which is where a correction starts from rather than something to correct.
 ]]
     end
 
@@ -339,16 +370,17 @@ The only failure is an edit that is not deliberate: values placed near zero beca
 
 Reason internally through these steps (do not write the reasoning in the final answer):
 0. READ THE PHOTOGRAPH: what kind of picture is this, and what is it about? Name the genre from what you actually see in THIS frame - portrait or people, landscape, wildlife, macro, street or documentary, still life, architecture, night or low-light - and, more importantly, name the subject and the quality of light that make it worth looking at. Then decide the treatment this particular photograph asks for. The genre tells you which materials are in play (skin, fur, foliage, stone, water, neon); what to do with them is your judgement about this image, not a house style you apply to every photo of that kind.
-0b. COLOUR OR BLACK AND WHITE: decide which this photograph is, and say so with ConvertToGrayscale. It is an authorial decision, so make it as one: black and white when the picture is carried by light, shape, gesture, texture or contrast; colour when hue is doing real work. If you choose black and white, commit to it and BUILD the grey rendering with GrayMixer<Color> - that mixer is how each original colour becomes a grey, and it is your main tool for separating subject from ground once colour no longer does it. A merely desaturated image is not a black and white photograph. In black and white, Vibrance, Saturation and the HSL saturation keys stop meaning anything; ColorGrade* remains available as toning. Then, separately, consider CameraProfile.
+0b. COLOUR OR BLACK AND WHITE: decide which this photograph is, and say so with ConvertToGrayscale. It is an authorial decision, so make it as one: black and white when the picture is carried by light, shape, gesture, texture or contrast; colour when hue is doing real work. If you choose black and white, commit to it and BUILD the grey rendering with GrayMixer<Color> - that mixer is how each original colour becomes a grey, and it is your main tool for separating subject from ground once colour no longer does it. A merely desaturated image is not a black and white photograph. In black and white, Vibrance, Saturation and the HSL saturation keys stop meaning anything; ColorGrade* remains available as toning.
 1. HORIZON/LINES: identify the single most reliable horizontal or vertical reference line in THIS image (natural horizon, waterline, tree trunk, building edge, an animal's back/legs when standing on visibly flat ground, etc.) and mentally note which one you used. Estimate its tilt angle from true horizontal/vertical as precisely as you can -> CropAngle. Only use CropAngle = 0 if you actually found such a reference line AND measured it to be within 0.3 degrees of level. Do NOT use 0 merely because you are unsure or found no obvious reference - in that case pick the best available approximate reference and still report a small non-zero correction if any visible tilt remains.
-2. EXPOSURE AND TONE: read the tonal distribution as if reading the histogram - what is blocked, what is clipped, where the midtones sit - and then decide where you WANT them. This is the shape of the picture, not just a correction: how dense the blacks are, how the highlights roll off, how much air is in the shadows, how much contrast the subject needs to read. Use Exposure, Highlights, Whites, Shadows, Blacks and Contrast together, and use the parametric curve when you want the boundaries between tonal regions to move rather than the whole range.
+2. EXPOSURE AND TONE: read the tonal distribution as if reading the histogram - what is blocked, what is clipped, where the midtones sit - and then decide where you WANT them. This is the shape of the picture, not just a correction: how dense the blacks are, how the highlights roll off, how much air is in the shadows, how much contrast the subject needs to read. Use Exposure, Highlights, Whites, Shadows, Blacks and Contrast together, use the parametric curve when you want the boundaries between tonal regions to move rather than the whole range, and the POINT curve when the shape of the tonality is itself the decision - a shoulder that holds the highlights, a toe that gives the blacks density.
 3. COLOUR AND MOOD: set Temperature and Tint to the colour of light you want this photograph to have - the neutral reading is one option among several, and keeping or pushing a cast is legitimate when the cast IS the mood. Then use the three-way colour grading (shadows / midtones / highlights, plus global) to give the image a colour identity rather than only a correct one.
+3b. COLOUR CHARACTER: if the photograph wants a rendering of colour rather than a correction of it, use the camera calibration - the primaries themselves. It is the deepest colour control there is and it touches the whole frame, so it is the place for a signature rather than for a fix.
 4. THE COLOUR MIXER: work the channels that carry this image - Hue, Saturation and Luminance on any of Red, Orange, Yellow, Green, Aqua, Blue, Purple, Magenta. All three dimensions are yours: Hue moves a colour to a different one, Saturation sets its intensity, Luminance sets how light or dark that colour renders, which is what separates a subject from a background of similar brightness. Go through the colours that actually appear in the frame and decide each one.
 5. DETAIL: sharpening, noise reduction and grain, judged on the material you named in step 0 and on how you want the picture to feel. Grain is a style choice as much as a repair, and both a clean rendering and a filmic one are legitimate answers.
 6. VIGNETTE: shape where the eye settles. Use it when you want the frame to close in on the subject, and leave it at 0 when the composition already does that work.
 7. COMPOSITION: propose a crop if it improves the ACTUAL framing of this image (distracting elements at the edges, excessive negative space, rule of thirds), ALWAYS keeping the original aspect ratio.
 8. LOCAL WORK WITH MASKS: go through the distinct regions that are actually visible in THIS frame - any of subject, people, objects, sky, landscape, background - and decide what each one needs on its own. This is where an edit stops being a filter over the whole picture and starts being photography: a subject brought forward, a background pushed back, a sky given its own light, a face treated differently from the scene around it. Use as many of the six regions as the photograph genuinely has; there is no quota, in either direction. The one hard rule is that the region must be really there - see the Masks section below.
-9. SELF-CHECK: before answering, re-verify every value you are about to output: your Temperature movement must be in the units the current value is reported in; the crop, if any, must keep the original aspect ratio and stay within 0-1; every movement must be plausible as a movement rather than a value copied from the ranges listed below; each Masks entry's "type" must be one of the allowed values, with no duplicate types; the three parametric split points, if present, must be strictly increasing; ConvertToGrayscale must be an unquoted boolean and GrayMixer<Color> must appear only alongside ConvertToGrayscale = true; CameraProfile, if present, must match one of the allowed strings exactly. Also confirm that every number you are returning is a MOVEMENT from the current value and not the value itself, except for the keys listed as positions. Silently fix anything that violates these constraints before producing the final JSON.
+9. SELF-CHECK: before answering, re-verify every value you are about to output: your Temperature movement must be in the units the current value is reported in; the crop, if any, must keep the original aspect ratio and stay within 0-1; every movement must be plausible as a movement rather than a value copied from the ranges listed below; each Masks entry's "type" must be one of the allowed values, with no duplicate types; the three parametric split points, if present, must be strictly increasing; ConvertToGrayscale must be an unquoted boolean and GrayMixer<Color> must appear only alongside ConvertToGrayscale = true; Also confirm that every number you are returning is a MOVEMENT from the current value and not the value itself, except for the keys listed as positions. Silently fix anything that violates these constraints before producing the final JSON.
 
 ]] .. PARAM_RULES .. deltaRuleBlock() .. [[
 

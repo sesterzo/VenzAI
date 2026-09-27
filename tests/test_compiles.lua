@@ -18,6 +18,7 @@ local FILES = {
     "VenzAIMessages",
     "VenzAIDelta",
     "VenzAIParse",
+    "VenzAIWorkFolder",
     "VenzAIPrompts",
     "VenzAIProcess",
     "VenzAIProviderContract",
