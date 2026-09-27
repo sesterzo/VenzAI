@@ -229,6 +229,10 @@ nothing is written into pixels, nothing is ever lost.
 
 English and Italian. Lightroom picks the language automatically.
 
+## What changed between versions
+
+[CHANGELOG.md](CHANGELOG.md), newest release first.
+
 ---
 
 ## For developers
