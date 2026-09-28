@@ -12,10 +12,30 @@ into real Adobe Lightroom Classic develop settings — exposure, tone curve,
 white balance, the colour mixer, detail, grain, crop, vignette, and AI-detected
 local masks.
 
-**Nothing is baked into pixels.** Every change lands on the sliders you already
-use: open the Basic panel afterwards and you will find ordinary numbers you can
-adjust, undo, or throw away. A snapshot is taken before anything happens and
-after every step, so there is always a way back.
+### Your photograph is never rewritten
+
+**No AI ever touches a pixel of your picture.** The model is not asked to
+produce an image — it is asked what the sliders should say, and the answer
+comes back as numbers. VenzAI then moves those sliders, exactly as your own
+hand would.
+
+So the photograph that comes out is the photograph you took:
+
+- **Not a generated image.** No pixel is invented, repainted, upscaled,
+  denoised by a model or re-encoded. Every detail in the final frame was on
+  your sensor.
+- **No watermark, no signature, no content credentials.** Nothing is stamped
+  into the file, visibly or invisibly, because the file is not rewritten at
+  all.
+- **Your raw is untouched.** The develop settings live where Lightroom keeps
+  them; the original file is not replaced, re-saved or converted.
+- **Every change is a slider you can see.** Open the Basic panel and you will
+  find ordinary numbers to adjust, undo, or throw away. A snapshot is taken
+  before anything happens and after every step, so there is always a way back.
+
+This is the whole design, not a reassurance. A model that returns an image
+gives you its interpretation of your photograph. A model that returns numbers
+gives you an edit — and an edit is yours to argue with.
 
 It runs against Google Gemini, OpenAI, or entirely offline through a local
 Ollama model.
@@ -25,6 +45,7 @@ provider is stripped of every piece of metadata first — no camera serial, no
 GPS, no names, no keywords. **With Ollama, nothing is uploaded at all.** See
 [Your photographs and your privacy](#your-photographs-and-your-privacy).
 
+- [Your photograph is never rewritten](#your-photograph-is-never-rewritten)
 - [Two runs, start to finish](#two-runs-start-to-finish)
 - [What a run actually does](#what-a-run-actually-does)
 - [Requirements](#requirements)
@@ -324,8 +345,10 @@ nothing is written into pixels, nothing is ever lost.
 - It does not retouch: no healing, no cloning, no object removal, no sky
   replacement. It moves develop sliders, which is a smaller and more
   recoverable thing.
-- The reference image is a target, never an output. VenzAI will not hand you a
-  generated picture.
+- The reference image is a target, never an output. It is generated so the
+  analysis has something to measure against, it lives in a temporary folder,
+  and not one of its pixels reaches your photograph. VenzAI will not hand you a
+  generated picture, and will not put one in your catalog.
 - With a cloud provider it sends a 2048 px JPEG of your photograph, stripped of
   its metadata, to the provider you chose. With Ollama it sends nothing
   anywhere. See [Your photographs and your
