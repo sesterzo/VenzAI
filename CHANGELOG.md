@@ -9,7 +9,10 @@ running; it does not mean anything on its own.
 
 ---
 
-## Unreleased
+## 1.2.0
+
+The release that decided what the plug-in guarantees, and under what terms it
+is published.
 
 ### New
 
