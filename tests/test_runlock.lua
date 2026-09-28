@@ -82,6 +82,64 @@ return {
         assert(Lock.minutesHeld(nil, 1000) == 0, "nothing held it")
     end },
 
+    --------------------------------------------------------------------------
+    -- Releasing it, which is where the first version failed
+    --------------------------------------------------------------------------
+    { "releasing it deletes the file, through the SDK", function()
+        -- The first version called os.remove, which in Lightroom's Lua left the
+        -- file exactly where it was - and since release runs inside a cleanup
+        -- handler, the failure was swallowed. A run finished at 20:38 and the
+        -- lock it took at 20:31 refused the next run for the rest of the night.
+        -- Every other deletion in the plug-in goes through LrFileUtils, and now
+        -- so does this one.
+        harness.reset()
+        Lock.release()
+        assert(harness.deleted[Lock.path()],
+            "the lock file was not deleted through LrFileUtils")
+    end },
+
+    { "releasing a lock that is not there does nothing and says nothing", function()
+        -- The ordinary case for a run that never took one. It must not raise:
+        -- a cleanup handler is the worst place for a second failure.
+        harness.reset()
+        harness.files = {}            -- nothing exists
+        local ok = pcall(function() Lock.release() end)
+        assert(ok, "release raised on a lock that was never taken")
+        assert(#harness.deletedOrder == 0, "it deleted something that was not there")
+    end },
+
+    { "a release that did not work is shouted about, not whispered", function()
+        -- Silence was the reason this cost an evening: a working release logged
+        -- nothing, so the log could not tell "released" from "never ran".
+        harness.reset()
+        harness.deleteFails = true    -- returns as if it worked, deletes nothing
+        pcall(function() Lock.release() end)
+        harness.deleteFails = false
+
+        local said = table.concat(harness.logLines, " | ")
+        assert(said:find("COULD NOT BE REMOVED", 1, true),
+            "a lock that outlives its run must be impossible to miss in the log")
+        assert(said:find("working folder", 1, true), "it must say how to get out of it")
+    end },
+
+    { "a release that worked says so", function()
+        harness.reset()
+        Lock.release()
+        assert(table.concat(harness.logLines, " | "):find("Lock released", 1, true),
+            "the log cannot tell a release from a handler that never ran")
+    end },
+
+    { "who holds it can be asked, so the button can say", function()
+        -- The panel offers to release the lock, and an offer without "a run
+        -- really is going" is a button that spoils a photograph. Written below
+        -- readHolder in the module on purpose: a local is in scope only after
+        -- its declaration, so the same function twelve lines higher would call
+        -- a nil global - at run time, never at load time.
+        harness.reset()
+        harness.files = {}
+        assert(Lock.heldSince() == nil, "it reported a holder for a lock that is not there")
+    end },
+
     { "the lock lives in the working folder, and is ours", function()
         local path = Lock.path()
         assert(type(path) == "string" and path ~= "", "no path")

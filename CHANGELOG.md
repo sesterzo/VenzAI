@@ -32,12 +32,27 @@ is published.
   corrections from one could land on the other's mask and neither result could
   be trusted. The lock is released when a run finishes, is cancelled or fails,
   and expires by itself after 30 minutes so a crash cannot wedge the plug-in.
-  Emptying the working folder also clears it.
+- **A button that releases the run lock**, in the settings panel, for the case
+  the expiry is meant to cover but half an hour too slowly. It says who holds
+  the lock and for how long before offering, and asks for confirmation:
+  releasing a lock while its run is still going lets a second run start on top
+  of it, which is the thing the lock exists to prevent. Emptying the working
+  folder clears it too.
 
 - **A licence.** The plug-in is now published under the PolyForm Strict License
   1.0.0: free for any noncommercial use, with redistribution, modified versions
   and commercial use reserved to the author. It is source-available, not open
   source, and the difference is deliberate.
+
+### Fixed
+
+- **A lock could outlive the run that took it.** The release deleted through
+  `os.remove`, which in Lightroom's Lua left the file where it was — and
+  because the release runs from a cleanup handler, the failure was swallowed
+  silently. A run that finished cleanly went on refusing the next run for half
+  an hour. Deletion now goes through the SDK like every other deletion in the
+  plug-in, and a release says in the log whether it worked: silence used to be
+  indistinguishable from a handler that never ran.
 
 ### Changed behaviour
 
@@ -49,6 +64,10 @@ is published.
   makes on its own - the reference image is not reliable for geometry - and
   silence there is no longer an available answer. Cutting a third to a half of
   the frame is described as ordinary when the picture needs it.
+- **The settings panel's diagnostics are three rows, not one.** The buttons ran
+  off the edge of the dialog in Italian, where the labels are longer. The lock
+  button has a row of its own because it is not a diagnostic: the others open
+  something to look at, that one changes the plug-in's state.
 - **OpenAI generates the reference by default.** It shipped switched off, when
   its request format came from documentation rather than from a call anyone had
   made. Without a reference the analysis has no target and goes back to

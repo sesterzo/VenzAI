@@ -27,6 +27,9 @@ filesystem or a clock.
 
 ------------------------------------------------------------------------------]]
 
+local LrFileUtils = import 'LrFileUtils'
+local LrPathUtils = import 'LrPathUtils'
+
 local Work = require 'VenzAIWorkFolder'
 local VenzAILog = require 'VenzAILog'
 
@@ -42,8 +45,10 @@ M.NAME = "venzai_run.lock"
 -- plug-in useless for the rest of the day.
 M.STALE_AFTER_SECONDS = 30 * 60
 
+-- Through LrPathUtils.child, like everywhere else: hardcoding a separator is
+-- the kind of thing that works on one platform and breaks on the other.
 function M.path()
-    return Work.path() .. "/" .. M.NAME
+    return LrPathUtils.child(Work.path(), M.NAME)
 end
 
 -- What goes in the file, and what comes back out of it. A file is not a
@@ -96,6 +101,18 @@ end
 -- menu commands chosen by one person seconds apart, not a race between
 -- processes. Lua in Lightroom is single-threaded and cooperative, and nothing
 -- between the read and the write below yields.
+-- When the current lock was taken, or nil if there is none. Public because the
+-- settings panel needs to say who holds it before offering to take it away,
+-- and "release it" without "a run really is going" is a button that breaks a
+-- photograph.
+--
+-- Below readHolder, not above it: a local is only in scope after its
+-- declaration, so the same function written twelve lines earlier would have
+-- called a nil global at run time and never at load time.
+function M.heldSince()
+    return readHolder()
+end
+
 function M.acquire(now)
     now = now or os.time()
     if not Work.ensure() then
@@ -131,16 +148,35 @@ end
 
 -- Safe to call when the lock was never taken, and safe to call twice: this
 -- runs from a cleanup handler, which is exactly where a second failure is
--- least welcome.
+-- least welcome, so nothing in here may raise.
+--
+-- Through LrFileUtils, like every other deletion in the plug-in. The first
+-- version used os.remove, which in Lightroom's Lua did not delete the file -
+-- and because it ran inside a cleanup handler the error was swallowed. A run
+-- finished cleanly at 20:38 and the lock from 20:31 was still there, blocking
+-- the next run with a message about a run that had ended.
+--
+-- And it says so on the way out. A release that logs nothing when it works
+-- makes silence ambiguous: there was no way to tell "released" from "never
+-- ran" in the log that had to be read to find this.
 function M.release()
-    local ok, err = os.remove(M.path())
-    if not ok then
-        -- Already gone is the ordinary case on a run that never took it.
-        local handle = io.open(M.path(), "rb")
-        if handle then
-            handle:close()
-            log("The lock file could not be removed: " .. tostring(err))
-        end
+    local path = M.path()
+
+    local existed = false
+    pcall(function() existed = LrFileUtils.exists(path) and true or false end)
+    if not existed then return end
+
+    local ok = pcall(function() LrFileUtils.delete(path) end)
+
+    local stillThere = false
+    pcall(function() stillThere = LrFileUtils.exists(path) and true or false end)
+
+    if ok and not stillThere then
+        log("Lock released.")
+    else
+        log("THE LOCK FILE COULD NOT BE REMOVED: " .. tostring(path) ..
+            " - the next run will be refused until it goes stale. " ..
+            "Emptying the working folder from the settings panel clears it.")
     end
 end
 

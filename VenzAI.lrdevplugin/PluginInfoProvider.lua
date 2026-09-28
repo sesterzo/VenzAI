@@ -32,6 +32,7 @@ local Registry = require 'VenzAIProviderRegistry'
 local Contract = require 'VenzAIProviderContract'
 local Messages = require 'VenzAIMessages'
 local Work = require 'VenzAIWorkFolder'
+local RunLock = require 'VenzAIRunLock'
 
 local log = VenzAILog.scoped("Settings")
 
@@ -276,6 +277,52 @@ local function cleanWorkFolderAction()
     end
 end
 
+-- The way out when a lock outlives its run.
+--
+-- It should never be needed: the lock is released when a run finishes, is
+-- cancelled or fails, and it goes stale on its own after 30 minutes. But it
+-- has been needed once - a release that silently did nothing left a finished
+-- run holding it - and "wait half an hour or find a file in a temp folder" is
+-- not an answer to give someone who just wants to develop a photograph.
+--
+-- It says who holds it before offering, because the honest answer is usually
+-- "a run really is going, wait for it".
+local function releaseLockAction()
+    local held = RunLock.heldSince()
+
+    if not held then
+        LrDialogs.message(
+            LOC "$$$/VenzAI/Settings/Lock/NoneTitle=No run is holding the lock",
+            LOC "$$$/VenzAI/Settings/Lock/NoneBody=Nothing is blocking a new run. You can start one now.",
+            "info")
+        return
+    end
+
+    local minutes = RunLock.minutesHeld(held, os.time())
+    local answer = LrDialogs.confirm(
+        LOC "$$$/VenzAI/Settings/Lock/ConfirmTitle=Release the run lock?",
+        LOC("$$$/VenzAI/Settings/Lock/ConfirmBody=A run has held the lock for ^1 minute(s).\n\nIf it is still going, let it finish: releasing the lock now would let a second run start, and two runs share the same exported file and the same selected mask, so neither result could be trusted.\n\nRelease it only if no run is in progress.", tostring(minutes)),
+        LOC "$$$/VenzAI/Settings/Lock/ConfirmRelease=Release it",
+        LOC "$$$/VenzAI/Settings/Lock/ConfirmCancel=Leave it alone")
+
+    if answer ~= "ok" then return end
+
+    RunLock.release()
+    log(string.format("User released a run lock held for %d minute(s).", minutes))
+
+    if RunLock.heldSince() then
+        LrDialogs.message(
+            LOC "$$$/VenzAI/Settings/Lock/FailedTitle=The lock could not be released",
+            LOC("$$$/VenzAI/Settings/Lock/FailedBody=The file is still there:\n\n^1\n\nDelete it by hand, or use 'Empty it' above.", RunLock.path()),
+            "critical")
+    else
+        LrDialogs.message(
+            LOC "$$$/VenzAI/Settings/Lock/ReleasedTitle=Run lock released",
+            LOC "$$$/VenzAI/Settings/Lock/ReleasedBody=You can start a run now.",
+            "info")
+    end
+end
+
 local function showLogAction()
     local folder = VenzAILog.logFolderPath()
     local file = VenzAILog.logFilePath()
@@ -418,6 +465,39 @@ local function sectionsForTopOfDialog(f, propertyTable)
         f:push_button {
             title = LOC "$$$/VenzAI/Settings/Work/CleanButton=Empty it",
             action = cleanWorkFolderAction,
+        },
+    })
+
+    -- Its own row, and not because the first one ran out of width - though it
+    -- did, and the last button was off the edge of the dialog in Italian,
+    -- where every label is longer. This one is not a diagnostic: the three
+    -- above open something to look at, this one changes the plug-in's state
+    -- and can let a second run start on top of one already going. Different
+    -- kind of act, different row, and a label that says so.
+    table.insert(section, f:row {
+        bind_to_object = propertyTable,
+        spacing = f:control_spacing(),
+        f:static_text {
+            title = LOC "$$$/VenzAI/Settings/Lock/Label=Run lock:",
+            width = share "venzai_label_width",
+        },
+        f:push_button {
+            title = LOC "$$$/VenzAI/Settings/Lock/ReleaseButton=Release it",
+            action = releaseLockAction,
+        },
+        f:static_text {
+            title = LOC "$$$/VenzAI/Settings/Lock/Hint=Only if no run is in progress.",
+        },
+    })
+
+    -- A setting, not a button: it belongs with the other things the user sets,
+    -- not in a row of actions.
+    table.insert(section, f:row {
+        bind_to_object = propertyTable,
+        spacing = f:control_spacing(),
+        f:static_text {
+            title = "",
+            width = share "venzai_label_width",
         },
         f:checkbox {
             value = bind "showReference",

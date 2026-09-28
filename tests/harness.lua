@@ -68,8 +68,22 @@ local function defaultStubs()
                 return { fileSize = (H.files and H.files[path]) or 12345 }
             end,
             exists = function(path)
+                if H.deleted and H.deleted[path] then return false end
                 if H.files and H.files[path] == nil then return false end
                 return "file"
+            end,
+            -- Deletion goes through here in every other module of the plug-in,
+            -- and a lock that deleted with os.remove instead survived a whole
+            -- run and blocked the next one. Recorded, so a test can ask.
+            delete = function(path)
+                -- H.deleteFails makes it lie: it returns as if it worked and
+                -- leaves the file there, which is exactly what os.remove did
+                -- inside Lightroom and what no test could see at the time.
+                if H.deleteFails then return true end
+                H.deleted = H.deleted or {}
+                H.deleted[path] = true
+                table.insert(H.deletedOrder, path)
+                return true
             end,
         },
         LrPathUtils = {
@@ -221,6 +235,9 @@ function H.reset()
     -- path -> size. nil means "every path exists", which is what most
     -- suites want; a table makes only the listed paths exist.
     H.files = nil
+    H.deleted = {}
+    H.deletedOrder = {}
+    H.deleteFails = false
 
     for _, path in ipairs(H.tempPaths or {}) do os.remove(path) end
     H.tempPaths = {}
