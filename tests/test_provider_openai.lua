@@ -40,12 +40,14 @@ return {
     -- written from documentation, not from a call that has ever been made, and
     -- a declared capability is a promise the engine will act on mid-photograph.
     -- The function is tested here in isolation until a real run confirms it.
-    { "the reference capability is declared but switched off by default", function()
-        -- The protocol is still unverified. What keeps it from running is no
-        -- longer a missing declaration but the toggle's default: the engine
-        -- asks Contract.capabilityEnabled, which reads the switch. That is the
-        -- whole point of the switch - it makes an unverified path safe to ship
-        -- without hiding it from someone willing to try it.
+    { "the reference is on by default, and still a switch", function()
+        -- It shipped OFF, because the request format came from documentation
+        -- rather than from a call anyone had made. The calls have been made,
+        -- and the reference turned out to be where a run's quality comes from:
+        -- without one the analysis has no target and goes back to deciding the
+        -- edit itself. So the default flipped, as Gemini's already was.
+        -- It stays a switch because the generation costs a call and about a
+        -- minute and a half, which not every run wants to pay.
         local D = require 'VenzAIProviderOpenAI'
         assert(type(D.generateReference) == "function", "the method is missing")
         assert(D.capabilities.generateReference, "the capability must be declared")
@@ -57,12 +59,12 @@ return {
         assert(toggle, "there is no toggle for it")
         assert(toggle.role == "toggle" and toggle.enables == "generateReference",
             "the toggle must be wired to the capability")
-        assert(toggle.default == false, "it must be OFF until a real run confirms the protocol")
+        assert(toggle.default == true, "the reference is what a run is measured against")
 
-        assert(not Contract.capabilityEnabled(D, "generateReference", {}),
-            "with nothing configured, the engine must not ask for a reference")
-        assert(Contract.capabilityEnabled(D, "generateReference", { useReference = true }),
-            "ticking the box must enable it")
+        assert(Contract.capabilityEnabled(D, "generateReference", {}),
+            "with nothing configured, the default must ask for a reference")
+        assert(not Contract.capabilityEnabled(D, "generateReference", { useReference = false }),
+            "clearing the box must still turn it off")
     end },
 
     { "the driver declares a model field for the reference image", function()
@@ -387,16 +389,13 @@ return {
 
     { "the engine degrades to analysis alone when the switch is off", function()
         -- Written when OpenAI could not generate an image at all, and asserted
-        -- the capability was absent. It can now, and what keeps the engine from
-        -- asking is the switch rather than the missing declaration - so the
-        -- assertion moves to the behaviour that actually matters: with the
-        -- switch off, nothing is asked for and nothing is sent.
+        -- the capability was absent. It can now, and it is on by default - so
+        -- what this guards is the other direction: someone who clears the box
+        -- gets a run with no reference and no call made on their behalf.
         harness.reset()
         local O = require 'VenzAIProviderOpenAI'
         assert(not Contract.capabilityEnabled(O, "generateReference", { useReference = false }),
-            "the engine would still ask for a reference")
-        assert(not Contract.capabilityEnabled(O, "generateReference", {}),
-            "with nothing configured the default must keep it off")
+            "clearing the box must stop the engine asking for a reference")
         assert(#harness.http.requests == 0, "nothing should have been sent")
     end },
 

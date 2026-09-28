@@ -44,17 +44,17 @@ local M = {
     id = "openai",
     displayName = "$$$/VenzAI/Provider/OpenAI/Name=OpenAI (cloud)",
     defaultTimeout = 300,
-    -- No generateReference: OpenAI's image models are a different endpoint with
-    -- a different shape, and the design forbids mixing roles. The engine asks
-    -- for the capability and proceeds without a reference, which is already the
-    -- path a local model takes.
-    -- generateReference is declared, and switched OFF by default through the
-    -- useReference toggle below. Its request format still comes from
-    -- documentation rather than from a call that has ever been made - but the
-    -- engine asks Contract.capabilityEnabled, which reads the switch, so the
-    -- unverified path cannot run until someone deliberately turns it on. That
-    -- is what the toggle is for: it makes an untried capability safe to ship
-    -- instead of hiding it from the person willing to try it.
+    -- generateReference posts to /images/edits, a different endpoint with a
+    -- different shape from the analysis call. It was shipped switched off,
+    -- because its request format came from documentation rather than from a
+    -- call anyone had made; that is what the useReference toggle is for, and
+    -- it let an untried capability be shipped instead of hidden.
+    -- It has since been made, many times, on real photographs: the reference
+    -- is where the quality of a run now comes from, and without one the
+    -- analysis has no target to measure against and falls back to deciding the
+    -- edit itself. So the switch now starts ON, as Gemini's does. It stays a
+    -- switch because the generation costs a call and about a minute and a
+    -- half, and not every run wants to pay that.
     capabilities = { analyze = true, generateReference = true, listModels = true },
     settingsFields = {
         { key = "apiKey", role = "secret", required = true,
@@ -63,9 +63,9 @@ local M = {
           label = "$$$/VenzAI/Provider/OpenAI/Model=Analysis model" },
         { key = "imageModel", role = "model", default = "gpt-image-2",
           label = "$$$/VenzAI/Provider/OpenAI/ImageModel=Reference image model" },
-        { key = "useReference", role = "toggle", default = false,
+        { key = "useReference", role = "toggle", default = true,
           enables = "generateReference",
-          label = "$$$/VenzAI/Provider/OpenAI/UseReference=Generate a reference image first (untested)" },
+          label = "$$$/VenzAI/Provider/OpenAI/UseReference=Generate a reference image first" },
         { key = "baseUrl", role = "url", default = "https://api.openai.com/v1",
           label = "$$$/VenzAI/Provider/OpenAI/BaseUrl=API base URL" },
     },
