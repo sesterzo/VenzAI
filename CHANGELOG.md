@@ -9,6 +9,46 @@ running; it does not mean anything on its own.
 
 ---
 
+## Unreleased
+
+### New
+
+- **The upload carries pixels and nothing else.** The exported JPEG used to go
+  to the provider with everything Lightroom writes into it: camera body and
+  serial number, lens, date and time, GPS coordinates, artist and copyright,
+  keywords, face regions with people's names, and the XMP block. The export now
+  asks for the least metadata Lightroom offers and the file is then opened and
+  stripped of every metadata segment regardless, keeping only the JFIF header
+  and the ICC colour profile. What was removed is named in the log. If the
+  strip fails the run stops rather than uploading a file whose contents are
+  unknown.
+
+- **One run at a time.** Starting a run while another is in progress is now
+  refused, with a message saying how long the other has been going. Two runs
+  shared the exported file, the working folder and the selected mask, so local
+  corrections from one could land on the other's mask and neither result could
+  be trusted. The lock is released when a run finishes, is cancelled or fails,
+  and expires by itself after 30 minutes so a crash cannot wedge the plug-in.
+  Emptying the working folder also clears it.
+
+### Changed behaviour
+
+- **A crooked horizon is measured, not judged.** When a photograph contains a
+  true horizon, whether it is level is a measurement, and the prompt now says
+  how to take it: compare the height of the line at the left edge of the frame
+  with its height at the right.
+- **Crops can be large.** Composition is the one decision the model still
+  makes on its own - the reference image is not reliable for geometry - and
+  silence there is no longer an available answer. Cutting a third to a half of
+  the frame is described as ordinary when the picture needs it.
+- **OpenAI generates the reference by default.** It shipped switched off, when
+  its request format came from documentation rather than from a call anyone had
+  made. Without a reference the analysis has no target and goes back to
+  deciding the edit itself, so the switch now starts on, as Gemini's already
+  did.
+
+---
+
 ## 1.1.1
 
 Nothing in the plug-in behaves differently from 1.1. This release marks the

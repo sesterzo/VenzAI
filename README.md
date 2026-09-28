@@ -20,14 +20,53 @@ after every step, so there is always a way back.
 It runs against Google Gemini, OpenAI, or entirely offline through a local
 Ollama model.
 
+**What is uploaded is a photograph and nothing else.** The file sent to a cloud
+provider is stripped of every piece of metadata first — no camera serial, no
+GPS, no names, no keywords. **With Ollama, nothing is uploaded at all.** See
+[Your photographs and your privacy](#your-photographs-and-your-privacy).
+
+- [Two runs, start to finish](#two-runs-start-to-finish)
 - [What a run actually does](#what-a-run-actually-does)
 - [Requirements](#requirements)
 - [Installing](#installing)
 - [Setting up a provider](#setting-up-a-provider)
+- [Your photographs and your privacy](#your-photographs-and-your-privacy)
 - [Checking it works](#checking-it-works)
 - [When something goes wrong](#when-something-goes-wrong)
 - [What it does not do](#what-it-does-not-do)
 - [For developers](#for-developers)
+
+---
+
+## Two runs, start to finish
+
+The photograph as it came off the card on the left, what VenzAI did to it on
+the right. Both runs were made with OpenAI, on raw files, with no human
+adjustment afterwards.
+
+![A yellow-billed hornbill on a branch, before and after: the flat, hazy
+original on the left, and on the right the same frame with a deep blue sky,
+the bird's black-and-white plumage separated from the background, and warm
+light on the wood.](samples/hornbill.png)
+
+The sky in the original is almost white and the bird sits in it without
+separation. On the right the sky has recovered its blue, the plumage has
+regained its pattern against it, and the wood carries the warmth of the light
+that was actually there — while the white of the head and the yellow of the
+bill stay where they belong rather than being pushed.
+
+![A view from Table Mountain over the Twelve Apostles and the Atlantic, before
+and after: the original dark and flat in the rock face with a hazy sea, and on
+the right the same frame with detail recovered in the rock, a graded sky, and
+the sea reading turquoise where it meets the shore.](samples/cape-coastline.png)
+
+Here the work is mostly in the shadows. The rock face on the left is a dark
+mass; on the right it has its structure back without the picture turning grey,
+the haze over the sea has cleared, and the sky carries a gradient from the
+horizon upward. The ground keeps its green instead of drifting yellow.
+
+Neither result is baked into pixels. Both are ordinary develop settings sitting
+in the panels, with a snapshot before every step.
 
 ---
 
@@ -136,15 +175,82 @@ There the analysis works from the photograph alone.
 | Server URL | `http://localhost:11434` by default. |
 | Model | Any vision model you have pulled, for example `qwen2.5vl`. |
 
-No API key: nothing leaves your machine. Expect a lower standard of judgement
-than the cloud models on a task this constrained — it is the right choice when
-the photographs must not leave the computer, not when you want the best result.
+No API key, no account, no upload: **the maximum privacy this plug-in can
+offer**, because there is no third party in the picture at all. Expect a lower
+standard of judgement than the cloud models on a task this constrained — it is
+the right choice when the photographs must not leave the computer, not when you
+want the best result.
 
 ### Refinement passes
 
 How many times the loop runs, from 1 to 5. Three is the default. More passes
 mean a more considered edit and a longer wait; the run stops by itself when the
 model stops asking for changes.
+
+---
+
+## Your photographs and your privacy
+
+### If you use Ollama, nothing leaves your computer
+
+The model runs on your own machine. No API key, no account, no upload, no
+network call to anyone. If your photographs must not leave the building — work
+under contract, people who have not consented to being processed by a third
+party, anything you would not email — this is the answer, and it is the only
+answer that does not depend on trusting someone else's terms of service.
+
+The cost is honest: a local vision model judges a photograph less well than the
+cloud models do. Choose it when that trade is the right one, not by default.
+
+### If you use Gemini or OpenAI, this is exactly what is sent
+
+Each pass uploads **one JPEG of the photograph you selected**, 2048 px on its
+longest side, together with the text prompt. Nothing else — not the original
+raw file, not your catalog, not the other photographs in the folder, not your
+develop history.
+
+**The JPEG is stripped of its metadata before it is uploaded.** A file exported
+from Lightroom normally carries a great deal about you and the photograph:
+
+| Normally in the file | Sent by VenzAI |
+|---|---|
+| Camera body and **serial number**, lens, settings | No |
+| Date and time the photograph was taken | No |
+| **GPS coordinates** of where you stood | No |
+| Artist, copyright, contact details | No |
+| Keywords and captions you wrote | No |
+| **Face regions with the names you tagged** | No |
+| XMP block, including your catalog's identifiers | No |
+| Original file name | No |
+| The pixels, and the colour profile that makes them mean something | Yes |
+
+VenzAI both asks Lightroom to export with minimal metadata and then opens the
+file and removes every metadata segment itself, because a setting a given
+Lightroom version does not recognise is ignored in silence. Each pass writes
+into the log what it removed, so you can check rather than take our word:
+
+```
+Export: 3 metadata segment(s) removed before upload: APP1, APP1, APP13.
+```
+
+**If the file cannot be cleaned, the run stops.** VenzAI will not upload a file
+whose contents it could not verify.
+
+### What the provider does with it
+
+That is between you and them, and it is worth reading before you send client
+work anywhere. Both Google and OpenAI publish terms for their paid APIs about
+whether submitted content is used for training; those terms are theirs to
+change, not ours. VenzAI adds no analytics, contacts no server of its own, and
+sends nothing anywhere except the provider you configured.
+
+### On this machine
+
+The exported JPEG and the generated reference images live in a VenzAI folder
+inside your system temp directory. The ten most recent references are kept and
+the rest deleted automatically; the settings panel has a button that empties
+the folder now. Your API key is stored in the operating system keychain, not in
+a preferences file and never in plain text.
 
 ---
 
@@ -219,9 +325,10 @@ nothing is written into pixels, nothing is ever lost.
   recoverable thing.
 - The reference image is a target, never an output. VenzAI will not hand you a
   generated picture.
-- It sends a 2048 px JPEG of your photograph to the provider you chose, unless
-  that provider is Ollama on your own machine. If that matters for the work you
-  do, use Ollama.
+- With a cloud provider it sends a 2048 px JPEG of your photograph, stripped of
+  its metadata, to the provider you chose. With Ollama it sends nothing
+  anywhere. See [Your photographs and your
+  privacy](#your-photographs-and-your-privacy).
 
 ---
 
@@ -236,6 +343,10 @@ English and Italian. Lightroom picks the language automatically.
 ---
 
 ## For developers
+
+[ARCHITECTURE.md](ARCHITECTURE.md) is the map: which module owns what, the two
+rules the design rests on, and the Lightroom constraints that are not ours to
+choose.
 
 Adding a provider is one new file and one line in the registry: the processing
 engine never names a provider and the settings panel builds itself from what
