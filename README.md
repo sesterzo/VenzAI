@@ -35,6 +35,7 @@ GPS, no names, no keywords. **With Ollama, nothing is uploaded at all.** See
 - [When something goes wrong](#when-something-goes-wrong)
 - [What it does not do](#what-it-does-not-do)
 - [For developers](#for-developers)
+- [Licence](#licence)
 
 ---
 
@@ -342,6 +343,36 @@ English and Italian. Lightroom picks the language automatically.
 
 ---
 
+## Licence
+
+**[PolyForm Strict License 1.0.0](LICENSE.md)** — source-available, not open
+source, and the difference is deliberate.
+
+| | |
+|---|---|
+| Use it for anything noncommercial | **Yes** |
+| Read the source | **Yes** |
+| Redistribute it | **No** |
+| Publish a modified version | **No** |
+| Any commercial use | **No** — ask first |
+
+A photographer editing their own work, a student, a hobbyist, a charity, a
+school or a public research body may use it freely: the licence names those
+cases explicitly. Selling it, bundling it into a paid product or a paid
+service, or using it as part of commercial work is not covered — that needs a
+separate agreement with the licensor, which is the author.
+
+Forks and modified copies are not permitted either. If you want something
+changed, open an issue: a change to the plug-in is a change to this
+repository.
+
+The file is the unmodified text published by the
+[PolyForm Project](https://polyformproject.org), a group of licensing lawyers
+writing plain-language source-available licences. Nothing in it was rewritten
+here.
+
+---
+
 ## For developers
 
 [ARCHITECTURE.md](ARCHITECTURE.md) is the map: which module owns what, the two
@@ -358,6 +389,12 @@ pip install -r tests/requirements.txt
 python tests/run.py            # every suite
 python tests/run.py delta      # only suites whose name matches
 ```
+
+A note on the two of those together: the licence does not permit modified
+versions or forks, so a pull request is not something you can send unasked —
+writing one means making a derivative work. If you want to change something,
+open an issue and say so. If you want to build on this, ask: permission is
+given by the author, not by the licence.
 
 The commit history is where the reasoning lives: each message says what was
 wrong and why the fix is shaped the way it is.

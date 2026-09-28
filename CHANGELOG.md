@@ -31,6 +31,11 @@ running; it does not mean anything on its own.
   and expires by itself after 30 minutes so a crash cannot wedge the plug-in.
   Emptying the working folder also clears it.
 
+- **A licence.** The plug-in is now published under the PolyForm Strict License
+  1.0.0: free for any noncommercial use, with redistribution, modified versions
+  and commercial use reserved to the author. It is source-available, not open
+  source, and the difference is deliberate.
+
 ### Changed behaviour
 
 - **A crooked horizon is measured, not judged.** When a photograph contains a
