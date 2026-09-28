@@ -19,6 +19,8 @@ local FILES = {
     "VenzAIDelta",
     "VenzAIParse",
     "VenzAIWorkFolder",
+    "VenzAIJpeg",
+    "VenzAIRunLock",
     "VenzAIPrompts",
     "VenzAIProcess",
     "VenzAIProviderContract",

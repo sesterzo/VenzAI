@@ -41,6 +41,8 @@ local Messages = require 'VenzAIMessages'
 local Prompts = require 'VenzAIPrompts'
 local Parse = require 'VenzAIParse'
 local Work = require 'VenzAIWorkFolder'
+local Jpeg = require 'VenzAIJpeg'
+local RunLock = require 'VenzAIRunLock'
 local Delta = require 'VenzAIDelta'
 local Masks = require 'VenzAIMasks'
 
@@ -157,6 +159,17 @@ local function exportCurrentPhoto(photo)
         -- we ask for - tonal separation, colour cast, noise, halos - while
         -- roughly quartering the bytes of a 4096px export.
         LR_size_maxDimension = 2048,
+
+        -- The photograph is about to be uploaded to a service the
+        -- photographer does not control, so it leaves with pixels and nothing
+        -- else. These ask Lightroom for the least its own export panel offers;
+        -- what actually guarantees it is the strip below, because a key this
+        -- Lightroom version does not know is ignored in silence.
+        LR_embeddedMetadataOption = "copyrightOnly",
+        LR_removeLocationMetadata = true,
+        LR_removeFaceMetadata = true,
+        LR_minimizeEmbeddedMetadata = true,
+
         LR_export_destinationType = "specificFolder",
         LR_export_destinationPathPrefix = WORK_DIR,
         LR_export_useSubfolder = false,
@@ -172,6 +185,24 @@ local function exportCurrentPhoto(photo)
             tempPath = pathOrMessage
         else
             return nil, pathOrMessage
+        end
+    end
+
+    -- Asking is not the same as knowing. The file is opened and every metadata
+    -- segment cut out of it, and the log says what was in there - so "the
+    -- upload carries no metadata" is something anyone can check after a run
+    -- instead of something this comment claims.
+    if tempPath then
+        local removed, why = Jpeg.stripFile(tempPath)
+        if not removed then
+            log(string.format("Export: the metadata could not be stripped (%s). " ..
+                "Not uploading a file whose contents are unknown.", tostring(why)))
+            return nil, "the exported file could not be cleaned of its metadata: " .. tostring(why)
+        elseif #removed > 0 then
+            log(string.format("Export: %d metadata segment(s) removed before upload: %s.",
+                #removed, table.concat(removed, ", ")))
+        else
+            log("Export: the file carried no metadata segment; nothing to remove.")
         end
     end
 
@@ -206,6 +237,27 @@ LrTasks.startAsyncTask(function()
             "critical"
         )
     end)
+
+    -- One run at a time, decided before anything is exported, written or
+    -- snapshotted. Two runs share the export path, the working folder, the
+    -- Develop module and - the one that can spoil a photograph - the SELECTED
+    -- mask that every local value is written into.
+    --
+    -- Released from a cleanup handler rather than at the end of the function:
+    -- this one runs on a clean finish, on a cancel and on an error alike, and
+    -- the only exit it cannot cover is Lightroom being killed, which is what
+    -- the lock's own staleness window is for.
+    local minutes
+    local gotLock, held = RunLock.acquire()
+    if not gotLock then
+        minutes = held
+        failToUser(
+            LOC "$$$/VenzAI/Error/AlreadyRunningTitle=VenzAI is already running",
+            LOC("$$$/VenzAI/Error/AlreadyRunningBody=A run has been in progress for ^1 minute(s). Wait for it to finish, or cancel it from the progress bar at the top left, before starting another.\n\nOne run at a time: two runs would share the same exported file and the same selected mask, and neither result could be trusted.", tostring(minutes))
+        )
+        return
+    end
+    context:addCleanupHandler(function() RunLock.release() end)
 
     -- The provider and its configuration are resolved HERE, not at the top of
     -- the file, and once per run rather than per call. Here, because a
