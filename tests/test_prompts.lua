@@ -293,6 +293,16 @@ return {
         assert(width < 0.8, "an example that trims 2% teaches trimming 2%")
     end },
 
+    { "a real horizon must be measured, not judged", function()
+        local prompt = Prompts.buildAnalysisPrompt(1, 3, true, nil, nil)
+        assert(prompt:find("A TRUE HORIZON IS NOT OPTIONAL", 1, true),
+            "a crooked horizon is the one error that cannot be left to taste")
+        -- And how to measure it, because "estimate the tilt" is not a method.
+        assert(prompt:find("where it meets the left edge", 1, true),
+            "the model needs a procedure, not an instruction to estimate")
+        assert(prompt:find("CropAngle", 1, true))
+    end },
+
     { "a measuring pass may undo its own overshoot", function()
         local prompt = Prompts.buildAnalysisPrompt(2, 3, true, "Tint = 8", nil)
         assert(not prompt:find("do NOT undo what already works well", 1, true),
