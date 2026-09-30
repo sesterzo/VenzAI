@@ -57,6 +57,7 @@ GPS, no names, no keywords. **With Ollama, nothing is uploaded at all.** See
 - [What it does not do](#what-it-does-not-do)
 - [For developers](#for-developers)
 - [Licence](#licence)
+- [Contributing](CONTRIBUTING.md)
 
 ---
 
@@ -385,9 +386,9 @@ cases explicitly. Selling it, bundling it into a paid product or a paid
 service, or using it as part of commercial work is not covered — that needs a
 separate agreement with the licensor, which is the author.
 
-Forks and modified copies are not permitted either. If you want something
-changed, open an issue: a change to the plug-in is a change to this
-repository.
+Forks and modified copies are not permitted as a way to ship your own version.
+They are permitted for one thing only: preparing a contribution to send back
+here — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 The file is the unmodified text published by the
 [PolyForm Project](https://polyformproject.org), a group of licensing lawyers
@@ -413,11 +414,13 @@ python tests/run.py            # every suite
 python tests/run.py delta      # only suites whose name matches
 ```
 
-A note on the two of those together: the licence does not permit modified
-versions or forks, so a pull request is not something you can send unasked —
-writing one means making a derivative work. If you want to change something,
-open an issue and say so. If you want to build on this, ask: permission is
-given by the author, not by the licence.
+**Contributions are welcome**, and they need a permission the licence does not
+give on its own: writing a patch means making a modified version.
+[CONTRIBUTING.md](CONTRIBUTING.md) grants it — a licence to copy and modify
+VenzAI for the sole purpose of preparing a contribution — and says what you
+grant in return, which is the right for the author to relicense your
+contribution, commercial use included. Open an issue before you write code:
+acceptance is a judgement about the design, not only about the patch.
 
 The commit history is where the reasoning lives: each message says what was
 wrong and why the fix is shaped the way it is.

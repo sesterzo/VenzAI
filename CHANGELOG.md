@@ -43,6 +43,10 @@ is published.
   1.0.0: free for any noncommercial use, with redistribution, modified versions
   and commercial use reserved to the author. It is source-available, not open
   source, and the difference is deliberate.
+- **Contributions are open**, through a permission granted alongside the
+  licence rather than by loosening it: you may copy and modify VenzAI for the
+  sole purpose of preparing a contribution, and nothing else. What you grant in
+  return, and what a contribution has to carry, are in `CONTRIBUTING.md`.
 
 ### Fixed
 

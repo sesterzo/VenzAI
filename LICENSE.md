@@ -7,6 +7,13 @@ You may use this software for any noncommercial purpose. You may not
 distribute it, and you may not make changes or new works based on it. For any
 other use, including any commercial use, ask the licensor.
 
+ADDITIONAL PERMISSION, granted by the licensor outside the licence below:
+you may copy and modify this software for the sole purpose of preparing a
+contribution to its repository, and send that contribution to the licensor.
+That permission does not extend to publishing a modified version, distributing
+your changed copy, or keeping a fork as a separate work. The terms are in
+CONTRIBUTING.md.
+
 Everything below this line is the unmodified text of the licence, as published
 by the PolyForm Project at https://polyformproject.org.
 
