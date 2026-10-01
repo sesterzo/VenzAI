@@ -20,6 +20,11 @@ request. It does not extend to publishing a modified version, distributing your
 changed copy to anyone else, or keeping a fork alive as a separate plug-in —
 whether your contribution is accepted or not.
 
+GitHub's **Fork** button creates a public copy by default, which is a form of
+redistribution. To stay within the permission, either make your fork private
+in the repository settings immediately after forking, or delete it once your
+pull request is closed.
+
 ## What you give when you send one
 
 By opening a pull request, or sending code in any other form, you agree that:
