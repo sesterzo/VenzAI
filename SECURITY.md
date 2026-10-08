@@ -26,7 +26,10 @@ update before reporting.
 
 **Do not open a public issue for a security vulnerability.**
 
-Email the author at the address in the git log with:
+Use GitHub's private vulnerability reporting:
+**Security → Report a vulnerability** on this repository's page.
+
+Include:
 
 - A description of the vulnerability and what it allows.
 - The steps or conditions needed to trigger it.
