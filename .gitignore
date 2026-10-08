@@ -32,3 +32,7 @@ tests/__pycache__/
 
 # Local measuring tools: useful here, not part of the plug-in.
 tools/
+
+# Distribution artefacts built for GitHub releases; not source.
+VenzAI.lrdevplugin.zip
+README.txt

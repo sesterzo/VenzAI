@@ -2,6 +2,58 @@
 
 What changes for you between releases. Newest first.
 
+---
+
+## 1.2.1
+
+Documentation, community files, and one behaviour fix in the reference image
+dialog.
+
+### New
+
+- **Code of conduct, security policy, issue templates, and a PR template.**
+  The repository now has the full set of GitHub community files: a code of
+  conduct, a security policy with the responsible disclosure address, a bug
+  report template that asks for the build number and the relevant log lines,
+  a feature request template that points to the architecture document, and a
+  pull request template with the checklist from `CONTRIBUTING.md`.
+
+### Fixed
+
+- **The reference image dialog now fits the screen.** Without a size
+  constraint the picture control rendered at the image's full resolution —
+  typically larger than the display — and the caption, the question, and the
+  buttons scrolled off the bottom. The image is now capped at 700 × 480 px;
+  Lightroom scales it to fit while keeping the aspect ratio.
+- **The "Continue or stop?" question is now asked.** When "Show the reference
+  image during a run" is on, the dialog now shows "Do you want to continue
+  with the processing?" with two buttons: **Continue** and **Stop the run**.
+  Stopping cancels the run cleanly before any analysis is sent. The question
+  was the reason the setting exists — without it a bad reference and a bad
+  reading of a good one look the same — and it was missing from the first
+  implementation.
+
+### Changed
+
+- The Italian label for the checkbox reads "Mostra l'immagine di riferimento
+  durante la run" (was "durante una corsa").
+
+### Documentation
+
+- Installing now leads with the release zip rather than "clone the
+  repository"; cloning is for developers.
+- Each provider section lists the models that have been tested end-to-end,
+  so a user trying an untested model knows what they are doing.
+- A new section explains the API token cost structure: two images per pass
+  when a reference is generated, six images for a typical three-pass run.
+- The "When something goes wrong" section now covers API key recovery through
+  Keychain Access (macOS) and Credential Manager (Windows).
+- The Ollama section explains that the URL field accepts any address,
+  including a remote machine on the local network.
+- `CONTRIBUTING.md` now says to keep a GitHub fork private or delete it
+  after the PR closes, because the default public fork is redistribution the
+  licence does not permit on its own.
+
 VenzAI reports a version as `major.minor.revision.build`. The first three
 numbers are the release, and they are what this file is organised by. The
 build counter moves on every change to the plug-in and says which code is

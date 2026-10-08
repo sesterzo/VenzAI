@@ -40,7 +40,7 @@
 "$$$/VenzAI/Settings/PassesLabel=Passaggi di rifinitura (1-5):"
 "$$$/VenzAI/Settings/Log/Label=Diagnostica:"
 "$$$/VenzAI/Settings/Log/ShowButton=Mostra il file di log"
-"$$$/VenzAI/Settings/ShowReference=Mostra l'immagine di riferimento durante una corsa"
+"$$$/VenzAI/Settings/ShowReference=Mostra l'immagine di riferimento durante la run"
 "$$$/VenzAI/Settings/Work/ShowButton=Mostra cartella di lavoro"
 "$$$/VenzAI/Settings/Work/CleanButton=Svuotala"
 "$$$/VenzAI/Settings/Lock/Label=Blocco elaborazione:"
@@ -64,7 +64,9 @@
 "$$$/VenzAI/Debug/ReferenceWhere=Salvata in: ^1"
 "$$$/VenzAI/Debug/ReferenceTitle=Immagine di riferimento da ^1"
 "$$$/VenzAI/Debug/ReferenceCaption=Questo e' il bersaglio verso cui lavora l'analisi. Non viene mai applicato alla fotografia."
+"$$$/VenzAI/Debug/ReferenceQuestion=Vuoi continuare con l'elaborazione?"
 "$$$/VenzAI/Debug/ReferenceContinue=Continua"
+"$$$/VenzAI/Debug/ReferenceStop=Ferma l'elaborazione"
 "$$$/VenzAI/Settings/Log/NotFoundTitle=File di log non trovato"
 "$$$/VenzAI/Settings/Log/NotFoundBody=Posizione prevista:\n^1\n\nIl file viene creato alla prima esecuzione di VenzAI."
 

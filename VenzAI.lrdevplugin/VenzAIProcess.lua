@@ -107,15 +107,18 @@ end
 -- the whole dialog is attempted under LrTasks.pcall: if the host will not draw
 -- it, the file is revealed in Explorer or the Finder instead, which is a worse
 -- view of the same image rather than a failed run.
+-- Returns true if the run should continue, false if the user chose to stop.
 local function showReferenceImage(path, driverName)
     if not path then
         log("Reference display: no file on disk to show.")
-        return
+        return true
     end
+
+    local wantsToContinue = true
 
     local shown = LrTasks.pcall(function()
         local f = LrView.osFactory()
-        LrDialogs.presentModalDialog {
+        local result = LrDialogs.presentModalDialog {
             title = LOC("$$$/VenzAI/Debug/ReferenceTitle=Reference image from ^1",
                 LOC(driverName)),
             contents = f:column {
@@ -123,18 +126,25 @@ local function showReferenceImage(path, driverName)
                 f:static_text {
                     title = LOC "$$$/VenzAI/Debug/ReferenceCaption=This is the target the analysis is working toward. It is never applied to the photograph.",
                 },
-                f:picture { value = path, frame_width = 1 },
+                f:picture { value = path, frame_width = 1, width = 700, height = 480 },
                 f:static_text { title = LOC("$$$/VenzAI/Debug/ReferenceWhere=Saved in: ^1", path) },
+                f:static_text {
+                    title = LOC "$$$/VenzAI/Debug/ReferenceQuestion=Do you want to continue with the processing?",
+                    font = "<system/bold>",
+                },
             },
             actionVerb = LOC "$$$/VenzAI/Debug/ReferenceContinue=Continue",
-            cancelVerb = "< exclude >",
+            cancelVerb = LOC "$$$/VenzAI/Debug/ReferenceStop=Stop the run",
         }
+        wantsToContinue = (result == "ok")
     end)
 
     if not shown then
         log("Reference display: this host would not draw the picture; revealing the file instead.")
         LrTasks.pcall(function() LrShell.revealInShell(path) end)
     end
+
+    return wantsToContinue
 end
 
 -- Exports the CURRENT state of the photo (already including the development
@@ -473,7 +483,11 @@ LrTasks.startAsyncTask(function()
                 local referencePath = saveReferenceToWorkDir(referenceImage)
 
                 if Settings.get("showReference") then
-                    showReferenceImage(referencePath, driver.displayName)
+                    local wantsToContinue = showReferenceImage(referencePath, driver.displayName)
+                    if not wantsToContinue then
+                        log("User chose to stop after seeing the reference image.")
+                        break
+                    end
                 end
             else
                 -- A missing reference is not a reason to stop: analysis on the

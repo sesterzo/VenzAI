@@ -30,7 +30,7 @@ return {
 
     LrPluginName = LOC "$$$/VenzAI/PluginName=VenzAI",
 
-    VERSION = { major = 1, minor = 2, revision = 0, build = 108 },
+    VERSION = { major = 1, minor = 2, revision = 1, build = 112 },
     -- major.minor.revision is the released version, tagged in git.
     -- build is the internal counter the .claude hook increments on every
     -- change to a bundle file: it says which code is running, which the
