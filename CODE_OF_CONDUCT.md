@@ -28,5 +28,6 @@ Issues, pull requests, and any other interaction in this repository.
 ## Reporting
 
 If something in this repository makes the space feel unsafe or unwelcoming,
-email the author at the address in the git log. Reports are handled
+use GitHub's private vulnerability reporting: **Security → Report a
+vulnerability** on this repository's page. Reports are handled
 confidentially.
